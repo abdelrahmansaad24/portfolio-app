@@ -52,8 +52,15 @@ export interface ProfileInfo {
   avatarUrl?: string;
   resumeUrl: string;
   storageBucketDataUrl?: string;
+  storageBucketUploadUrl?: string;
+  storageBucketApiKey?: string;
+  autoSyncToBucket?: boolean;
   boxStorageApiKey?: string;
+  boxClientId?: string;
+  boxClientSecret?: string;
   boxFolderId?: string;
+  boxFileId?: string;
+  boxCvFileId?: string;
 }
 
 export interface PortfolioData {

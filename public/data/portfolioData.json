@@ -11,10 +11,17 @@
     "linkedin": "https://www.linkedin.com/in/abdelrhman-saad-93b6451bb",
     "github": "https://github.com/abdelrahmansaad24",
     "avatarUrl": "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=600&q=80",
-    "resumeUrl": "/cv/CV.pdf",
-    "storageBucketDataUrl": "https://firebasestorage.googleapis.com/v0/b/portfolio-77dbd.appspot.com/o/data%2FportfolioData.json?alt=media",
-    "boxStorageApiKey": "",
-    "boxFolderId": ""
+    "resumeUrl": "https://app.box.com/shared/static/kcl8o7o4u3ih99g6myiunj6i8824kz3m.pdf",
+    "storageBucketDataUrl": "https://app.box.com/shared/static/6bw5z2eva5bj1qb8405hmaed6npy5rmx.json",
+    "storageBucketUploadUrl": "https://firebasestorage.googleapis.com/v0/b/portfolio-77dbd.appspot.com/o?name=data%2FportfolioData.json",
+    "storageBucketApiKey": "",
+    "autoSyncToBucket": false,
+    "boxStorageApiKey": "LR7KUd1r9GY3xTO8oSHNG3aEO8Xy5jVJ",
+    "boxClientId": "d2wfdpz2vcfmwomdidg2fxe7ws5f7pqw",
+    "boxClientSecret": "C8l8yR5uGKpSb5i8mJpBwXRW5M82dnJm",
+    "boxFolderId": "414043598356",
+    "boxFileId": "2440626249336",
+    "boxCvFileId": "2440627671737"
   },
   "experiences": [
     {
@@ -116,13 +123,13 @@
     },
     {
       "id": "proj-attend",
-      "title": "Attend (Enterprise Event & Venue Management Platform)",
+      "title": "Attnd (Enterprise Event & Venue Management Platform)",
       "category": "Full-Stack",
       "description": "Multi-role event ecosystem (Admin, User, Venue Owner, Supplier) featuring event booking, catering/equipment supply pipelines, and payment processing.",
       "longDescription": "Developed an extensive multi-tenant platform with React front-end and Express.js back-end. Implemented role-based access control (RBAC), JWT authentication, PostgreSQL database relational architecture, React Context for state management, and real-time alerts.",
       "imgUrl": "https://images.unsplash.com/photo-1511578314322-379afb476865?auto=format&fit=crop&w=1200&q=80",
-      "liveUrl": "https://github.com/abdelrahmansaad24/Attend",
-      "githubUrl": "https://github.com/abdelrahmansaad24/Attend",
+      "liveUrl": "https://attnd.sa",
+      "githubUrl": "",
       "tags": [
         "React",
         "Express.js",
@@ -381,47 +388,125 @@
     {
       "category": "Frontend Engineering",
       "skills": [
-        { "name": "React.js / Next.js", "level": 95 },
-        { "name": "TypeScript / JavaScript", "level": 92 },
-        { "name": "Angular", "level": 85 },
-        { "name": "HTML5 / CSS3 / SCSS", "level": 95 },
-        { "name": "Tailwind CSS / Glassmorphism", "level": 90 },
-        { "name": "Flutter (Mobile UI)", "level": 82 }
+        {
+          "name": "React.js / Next.js",
+          "level": 95
+        },
+        {
+          "name": "TypeScript / JavaScript",
+          "level": 92
+        },
+        {
+          "name": "Angular",
+          "level": 85
+        },
+        {
+          "name": "HTML5 / CSS3 / SCSS",
+          "level": 95
+        },
+        {
+          "name": "Tailwind CSS / Glassmorphism",
+          "level": 90
+        },
+        {
+          "name": "Flutter (Mobile UI)",
+          "level": 82
+        }
       ]
     },
     {
       "category": "Backend & Cloud Systems",
       "skills": [
-        { "name": "Node.js & Express.js", "level": 94 },
-        { "name": "Laravel (PHP)", "level": 88 },
-        { "name": "Spring Boot (Java)", "level": 80 },
-        { "name": "RESTful APIs & Swagger", "level": 95 },
-        { "name": "RabbitMQ (Message Queues)", "level": 85 },
-        { "name": "Docker & Containerization", "level": 86 },
-        { "name": "AWS & Azure Cloud SDKs", "level": 84 }
+        {
+          "name": "Node.js & Express.js",
+          "level": 94
+        },
+        {
+          "name": "Laravel (PHP)",
+          "level": 88
+        },
+        {
+          "name": "Spring Boot (Java)",
+          "level": 80
+        },
+        {
+          "name": "RESTful APIs & Swagger",
+          "level": 95
+        },
+        {
+          "name": "RabbitMQ (Message Queues)",
+          "level": 85
+        },
+        {
+          "name": "Docker & Containerization",
+          "level": 86
+        },
+        {
+          "name": "AWS & Azure Cloud SDKs",
+          "level": 84
+        }
       ]
     },
     {
       "category": "Databases & Storage",
       "skills": [
-        { "name": "PostgreSQL", "level": 90 },
-        { "name": "MySQL", "level": 92 },
-        { "name": "MongoDB", "level": 90 },
-        { "name": "Redis (Caching)", "level": 85 },
-        { "name": "Neo4j (Graph DB)", "level": 75 },
-        { "name": "AWS S3 / Box Storage APIs", "level": 88 }
+        {
+          "name": "PostgreSQL",
+          "level": 90
+        },
+        {
+          "name": "MySQL",
+          "level": 92
+        },
+        {
+          "name": "MongoDB",
+          "level": 90
+        },
+        {
+          "name": "Redis (Caching)",
+          "level": 85
+        },
+        {
+          "name": "Neo4j (Graph DB)",
+          "level": 75
+        },
+        {
+          "name": "AWS S3 / Box Storage APIs",
+          "level": 88
+        }
       ]
     },
     {
       "category": "Languages & Core Fundamentals",
       "skills": [
-        { "name": "JavaScript / TypeScript", "level": 95 },
-        { "name": "PHP", "level": 90 },
-        { "name": "Python", "level": 85 },
-        { "name": "Java", "level": 84 },
-        { "name": "C / C++", "level": 82 },
-        { "name": "SQL & Query Optimization", "level": 92 },
-        { "name": "Dart", "level": 80 }
+        {
+          "name": "JavaScript / TypeScript",
+          "level": 95
+        },
+        {
+          "name": "PHP",
+          "level": 90
+        },
+        {
+          "name": "Python",
+          "level": 85
+        },
+        {
+          "name": "Java",
+          "level": 84
+        },
+        {
+          "name": "C / C++",
+          "level": 82
+        },
+        {
+          "name": "SQL & Query Optimization",
+          "level": 92
+        },
+        {
+          "name": "Dart",
+          "level": 80
+        }
       ]
     }
   ]

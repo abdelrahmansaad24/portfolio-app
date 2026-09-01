@@ -21,10 +21,20 @@ import {
   RefreshCw,
   FileText,
   Cloud,
+  UploadCloud,
+  Check,
+  AlertCircle,
+  Zap,
+  Radio,
 } from 'lucide-react';
 import { usePortfolio } from '../context/PortfolioContext';
 import type { Project, Experience, ProfileInfo, ProjectCategory } from '../types/portfolio';
-import { StorageService, DEFAULT_STORAGE_BUCKET_URL } from '../services/storageService';
+import {
+  StorageService,
+  DEFAULT_STORAGE_BUCKET_URL,
+  DEFAULT_STORAGE_BUCKET_UPLOAD_URL,
+  LOCAL_JSON_FALLBACK_URL,
+} from '../services/storageService';
 import { useNavigate } from 'react-router-dom';
 
 interface AdminDashboardProps {
@@ -35,6 +45,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
   const {
     data,
     isSyncing,
+    isPushing,
+    lastSyncStatus,
     updateProfile,
     addProject,
     updateProject,
@@ -46,11 +58,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     resetToDefaults,
     importPortfolioData,
     syncWithStorageBucket,
+    pushToStorageBucket,
+    pushToBoxStorage,
+    initializeBoxBucket,
   } = usePortfolio();
 
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<'projects' | 'experience' | 'skills' | 'profile' | 'backup'>('projects');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [bucketTestState, setBucketTestState] = useState<{ testing: boolean; message: string | null; isSuccess?: boolean }>({
+    testing: false,
+    message: null,
+  });
 
   // Project Modal State
   const [isProjectModalOpen, setIsProjectModalOpen] = useState(false);
@@ -248,13 +267,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     if (!file) return;
     setIsUploading(true);
     try {
+      const boxToken = profileForm.boxStorageApiKey || data.profile.boxStorageApiKey;
       const url = await StorageService.uploadDocumentFile(
         file,
-        data.profile.boxStorageApiKey,
-        data.profile.boxFolderId
+        boxToken,
+        profileForm.boxFolderId || data.profile.boxFolderId
       );
       setProfileForm((prev) => ({ ...prev, resumeUrl: url }));
-      showToast('CV / Resume uploaded successfully!');
+      updateProfile({ ...data.profile, ...profileForm, resumeUrl: url });
+      showToast('CV / Resume uploaded successfully to Storage Bucket / Box!');
     } catch (err) {
       console.error('CV upload error:', err);
       showToast('Error uploading CV file');
@@ -274,10 +295,78 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     }
   };
 
-  const handleSaveProfile = (e: React.FormEvent) => {
+  const handlePushToBucket = async () => {
+    showToast('Pushing latest data to Storage Bucket...');
+    const result = await pushToStorageBucket();
+    if (result.success) {
+      showToast('Data published to Storage Bucket successfully!');
+    } else {
+      showToast(`Warning: ${result.message}`);
+    }
+  };
+
+  const handleTestBucket = async (urlToTest?: string) => {
+    const url = urlToTest || profileForm.storageBucketDataUrl || DEFAULT_STORAGE_BUCKET_URL;
+    setBucketTestState({ testing: true, message: null });
+    const res = await StorageService.testBucketConnection(url);
+    setBucketTestState({
+      testing: false,
+      message: res.message,
+      isSuccess: res.success,
+    });
+  };
+
+  const handleTestBox = async () => {
+    setBucketTestState({ testing: true, message: null });
+    const res = await StorageService.testBoxConnection(profileForm.boxStorageApiKey);
+    setBucketTestState({
+      testing: false,
+      message: res.message,
+      isSuccess: res.success,
+    });
+  };
+
+  const handlePushToBox = async () => {
+    showToast('Pushing portfolio data directly to Box Cloud Storage...');
+    const res = await pushToBoxStorage({ ...data, profile: profileForm });
+    if (res.success) {
+      if (res.fileId) {
+        setProfileForm((prev) => ({ ...prev, boxFileId: res.fileId }));
+      }
+      if (res.downloadUrl) {
+        setProfileForm((prev) => ({ ...prev, storageBucketDataUrl: res.downloadUrl }));
+      }
+      showToast(res.message);
+    } else {
+      showToast(res.message);
+    }
+  };
+
+  const handleInitializeBoxBucket = async () => {
+    showToast('Initializing Box Bucket: creating default dataset & uploading CV...');
+    const res = await initializeBoxBucket();
+    if (res.success) {
+      setProfileForm({ ...data.profile });
+      showToast('Box Bucket initialized successfully with default portfolio data & CV!');
+    } else {
+      showToast(`Box Initialization: ${res.message}`);
+    }
+  };
+
+  const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     updateProfile(profileForm);
-    showToast('Profile & storage configuration saved!');
+    if (profileForm.autoSyncToBucket) {
+      showToast('Profile saved! Pushing updates to Storage Bucket...');
+      const res = await pushToStorageBucket({ ...data, profile: profileForm });
+      if (res.success) {
+        showToast('Profile saved & synced to Storage Bucket!');
+      } else {
+        showToast(`Profile saved locally: ${res.message}`);
+      }
+    } else {
+      showToast('Profile & storage configuration saved!');
+    }
   };
 
   // --- Backup Handlers ---
@@ -374,14 +463,59 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
           </div>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+          {lastSyncStatus && (
+            <div
+              style={{
+                fontSize: '0.75rem',
+                color: 'var(--text-muted)',
+                background: 'rgba(255, 255, 255, 0.05)',
+                padding: '0.35rem 0.75rem',
+                borderRadius: '20px',
+                border: '1px solid var(--border-glass)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.35rem',
+              }}
+            >
+              <Radio size={12} color="#10b981" />
+              <span>{lastSyncStatus}</span>
+            </div>
+          )}
+
+          <button
+            onClick={handlePushToBucket}
+            disabled={isPushing}
+            className="btn btn-primary btn-sm"
+            style={{
+              gap: '0.4rem',
+              background: 'linear-gradient(135deg, #06b6d4, #6366f1)',
+              boxShadow: '0 4px 14px rgba(6, 182, 212, 0.3)',
+            }}
+            title="Push and publish current changes directly to Storage Bucket"
+          >
+            <UploadCloud size={14} className={isPushing ? 'animate-spin' : ''} />
+            <span>{isPushing ? 'Publishing...' : 'Push to Bucket'}</span>
+          </button>
+
+          <button
+            onClick={() => handleSyncStorageBucket()}
+            disabled={isSyncing}
+            className="btn btn-secondary btn-sm"
+            style={{ gap: '0.4rem' }}
+            title="Fetch latest data from Storage Bucket"
+          >
+            <RefreshCw size={14} className={isSyncing ? 'animate-spin' : ''} />
+            <span>{isSyncing ? 'Syncing...' : 'Pull Bucket'}</span>
+          </button>
+
           <button
             onClick={() => navigate('/')}
             className="btn btn-secondary btn-sm"
             style={{ gap: '0.4rem' }}
           >
             <ExternalLink size={14} />
-            <span>View Live Site</span>
+            <span>Live Site</span>
           </button>
 
           <button
@@ -842,16 +976,48 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                   borderRadius: 'var(--radius-md)',
                 }}
               >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-                  <Cloud size={18} color="#818cf8" />
-                  <h4 style={{ fontSize: '1rem' }}>Storage Bucket Data URL</h4>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <Cloud size={18} color="#818cf8" />
+                    <h4 style={{ fontSize: '1rem' }}>Storage Bucket & Live Data Sync</h4>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleTestBucket(profileForm.storageBucketDataUrl)}
+                    disabled={bucketTestState.testing}
+                    className="btn btn-secondary btn-sm"
+                    style={{ fontSize: '0.75rem', padding: '0.25rem 0.6rem' }}
+                  >
+                    <Zap size={12} />
+                    <span>{bucketTestState.testing ? 'Testing...' : 'Test Connection'}</span>
+                  </button>
                 </div>
                 <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginBottom: '1rem' }}>
-                  Link to your Firebase Storage Bucket, S3, or CDN JSON dataset. The app automatically fetches and caches this data on startup.
+                  When someone opens your portfolio, it automatically reads the latest data directly from this bucket URL so you never need to redeploy or fix defaults manually.
                 </p>
 
-                <div className="form-group">
-                  <label className="form-label">Remote Storage Bucket JSON URL</label>
+                {bucketTestState.message && (
+                  <div
+                    style={{
+                      marginBottom: '1rem',
+                      padding: '0.6rem 0.85rem',
+                      borderRadius: 'var(--radius-sm)',
+                      background: bucketTestState.isSuccess ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+                      border: `1px solid ${bucketTestState.isSuccess ? 'rgba(16, 185, 129, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`,
+                      color: bucketTestState.isSuccess ? '#34d399' : '#f87171',
+                      fontSize: '0.8rem',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.5rem',
+                    }}
+                  >
+                    {bucketTestState.isSuccess ? <Check size={14} /> : <AlertCircle size={14} />}
+                    <span>{bucketTestState.message}</span>
+                  </div>
+                )}
+
+                <div className="form-group" style={{ marginBottom: '1rem' }}>
+                  <label className="form-label">Storage Bucket Read URL (GET JSON data)</label>
                   <input
                     type="text"
                     placeholder={DEFAULT_STORAGE_BUCKET_URL}
@@ -863,54 +1029,175 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                     Default Bucket: <code>{DEFAULT_STORAGE_BUCKET_URL}</code> | Fallback: <code>/data/portfolioData.json</code>
                   </small>
                 </div>
+
+                <div className="form-group" style={{ marginBottom: '1rem' }}>
+                  <label className="form-label">Storage Bucket Upload Endpoint (POST/PUT JSON)</label>
+                  <input
+                    type="text"
+                    placeholder={DEFAULT_STORAGE_BUCKET_UPLOAD_URL}
+                    value={profileForm.storageBucketUploadUrl || ''}
+                    onChange={(e) => setProfileForm({ ...profileForm, storageBucketUploadUrl: e.target.value })}
+                    className="form-control"
+                  />
+                  <small style={{ color: 'var(--text-muted)', display: 'block', marginTop: '0.35rem' }}>
+                    Endpoint used by "Push to Bucket" to save changes directly to Firebase Storage, Box, Cloudflare R2, or custom API.
+                  </small>
+                </div>
+
+                <div className="form-group" style={{ marginBottom: '1rem' }}>
+                  <label className="form-label">Storage Bucket API Key / Token (Optional)</label>
+                  <input
+                    type="password"
+                    placeholder="Firebase API Key or Bearer Token (if bucket requires authentication)"
+                    value={profileForm.storageBucketApiKey || ''}
+                    onChange={(e) => setProfileForm({ ...profileForm, storageBucketApiKey: e.target.value })}
+                    className="form-control"
+                  />
+                </div>
+
+                <div style={{ marginTop: '0.75rem' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', cursor: 'pointer', fontSize: '0.85rem' }}>
+                    <input
+                      type="checkbox"
+                      checked={!!profileForm.autoSyncToBucket}
+                      onChange={(e) => setProfileForm({ ...profileForm, autoSyncToBucket: e.target.checked })}
+                      style={{ width: '16px', height: '16px', accentColor: 'var(--primary)' }}
+                    />
+                    <span>Automatically Push & Publish changes to Storage Bucket on save</span>
+                  </label>
+                </div>
               </div>
 
-              {/* Box Storage Configuration */}
+              {/* Box Enterprise JWT Storage Hub */}
               <div
                 style={{
                   marginTop: '1.5rem',
                   padding: '1.25rem',
                   background: 'rgba(6, 182, 212, 0.05)',
-                  border: '1px solid rgba(6, 182, 212, 0.2)',
+                  border: '1px solid rgba(6, 182, 212, 0.25)',
                   borderRadius: 'var(--radius-md)',
                 }}
               >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
-                  <Upload size={18} color="var(--primary)" />
-                  <h4 style={{ fontSize: '1rem' }}>Box Storage API Settings (Optional)</h4>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <Upload size={18} color="var(--primary)" />
+                    <h4 style={{ fontSize: '1rem' }}>Box Enterprise Storage Hub (JWT Authenticated)</h4>
+                    <span style={{ fontSize: '0.7rem', padding: '0.15rem 0.5rem', borderRadius: '10px', background: 'rgba(16, 185, 129, 0.2)', color: '#34d399', border: '1px solid rgba(16, 185, 129, 0.3)' }}>
+                      Active
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      onClick={handleTestBox}
+                      disabled={bucketTestState.testing}
+                      className="btn btn-secondary btn-sm"
+                      style={{ fontSize: '0.75rem', padding: '0.25rem 0.6rem' }}
+                    >
+                      <Zap size={12} />
+                      <span>{bucketTestState.testing ? 'Testing...' : 'Test Box JWT Token'}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleInitializeBoxBucket}
+                      className="btn btn-secondary btn-sm"
+                      style={{ fontSize: '0.75rem', padding: '0.25rem 0.6rem', border: '1px solid var(--primary)', color: 'var(--primary)' }}
+                      title="Upload default portfolio JSON and default CV directly to Box bucket"
+                    >
+                      <Layers size={12} />
+                      <span>Re-seed Defaults & CV on Box</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handlePushToBox}
+                      className="btn btn-primary btn-sm"
+                      style={{ fontSize: '0.75rem', padding: '0.25rem 0.6rem' }}
+                    >
+                      <UploadCloud size={12} />
+                      <span>Push to Box Bucket</span>
+                    </button>
+                  </div>
                 </div>
+
                 <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginBottom: '1rem' }}>
-                  If you have a Box Developer Access Token, paste it below to push project image uploads directly to your Box account. (If left blank, images are instantly encoded and stored locally).
+                  Your portfolio is connected to Box Cloud Storage using <strong>Server Authentication (JWT)</strong> via <code>1536515809__config.json</code>. Changes and CV uploads are saved directly to Box.
                 </p>
 
-                <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr', gap: '1rem' }} className="form-row">
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }} className="form-row">
                   <div className="form-group">
-                    <label className="form-label">Box Developer Access Token</label>
+                    <label className="form-label">Box Enterprise ID</label>
                     <input
-                      type="password"
-                      placeholder="e.g. 7q8k... (Box OAuth Token)"
-                      value={profileForm.boxStorageApiKey || ''}
-                      onChange={(e) => setProfileForm({ ...profileForm, boxStorageApiKey: e.target.value })}
+                      type="text"
+                      readOnly
+                      value="1536515809"
                       className="form-control"
+                      style={{ opacity: 0.85, background: 'rgba(0,0,0,0.2)' }}
                     />
                   </div>
 
                   <div className="form-group">
-                    <label className="form-label">Box Folder ID (Default: 0 for Root)</label>
+                    <label className="form-label">Box Client ID</label>
                     <input
                       type="text"
-                      placeholder="0"
-                      value={profileForm.boxFolderId || '0'}
+                      readOnly
+                      value={profileForm.boxClientId || 'lsdrk5clh21oyydo23bnb9x48958ooqz'}
+                      className="form-control"
+                      style={{ opacity: 0.85, background: 'rgba(0,0,0,0.2)' }}
+                    />
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1rem', marginTop: '0.75rem' }} className="form-row">
+                  <div className="form-group">
+                    <label className="form-label">Box Folder ID</label>
+                    <input
+                      type="text"
+                      placeholder="414043598356"
+                      value={profileForm.boxFolderId || '414043598356'}
                       onChange={(e) => setProfileForm({ ...profileForm, boxFolderId: e.target.value })}
                       className="form-control"
                     />
                   </div>
+
+                  <div className="form-group">
+                    <label className="form-label">Box File ID (portfolioData.json)</label>
+                    <input
+                      type="text"
+                      placeholder="2440626249336"
+                      value={profileForm.boxFileId || '2440626249336'}
+                      onChange={(e) => setProfileForm({ ...profileForm, boxFileId: e.target.value })}
+                      className="form-control"
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label">Box CV File ID (Resume.pdf)</label>
+                    <input
+                      type="text"
+                      placeholder="2440627671737"
+                      value={profileForm.boxCvFileId || '2440627671737'}
+                      onChange={(e) => setProfileForm({ ...profileForm, boxCvFileId: e.target.value })}
+                      className="form-control"
+                    />
+                  </div>
+                </div>
+
+                <div style={{ marginTop: '0.75rem', display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+                  <a
+                    href="https://app.box.com/s/2uornst7s8djwchnahwvvenjueh43zta"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="btn btn-secondary btn-sm"
+                    style={{ fontSize: '0.8rem', padding: '0.35rem 0.75rem' }}
+                  >
+                    <span>Open Live Box Folder (2 Files: Resume.pdf & portfolioData.json) ↗</span>
+                  </a>
                 </div>
               </div>
 
               <button type="submit" className="btn btn-primary" style={{ marginTop: '1.5rem' }}>
                 <Save size={16} />
-                <span>Save Profile Changes</span>
+                <span>Save Profile & Storage Settings</span>
               </button>
             </form>
           </div>
@@ -920,9 +1207,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
         {activeTab === 'backup' && (
           <div style={{ maxWidth: '750px' }}>
             <div style={{ marginBottom: '1.5rem' }}>
-              <h3 style={{ fontSize: '1.5rem' }}>Storage Bucket, Backup & Factory Reset</h3>
+              <h3 style={{ fontSize: '1.5rem' }}>Storage Bucket & Live Cloud Deployment</h3>
               <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-                Sync live data with your remote Storage Bucket, export JSON backups, or import snapshots.
+                Push and publish your portfolio data directly to the remote Storage Bucket so any visitor immediately loads your newest updates.
               </p>
             </div>
 
@@ -936,22 +1223,139 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                   background: 'rgba(99, 102, 241, 0.05)',
                 }}
               >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.5rem' }}>
-                  <Cloud size={20} color="#818cf8" />
-                  <h4 style={{ fontSize: '1.15rem' }}>Live Storage Bucket Sync</h4>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                    <Cloud size={20} color="#818cf8" />
+                    <h4 style={{ fontSize: '1.15rem' }}>Live Storage Bucket Push & Sync</h4>
+                  </div>
+                  {lastSyncStatus && (
+                    <span style={{ fontSize: '0.75rem', color: '#a5b4fc', background: 'rgba(99,102,241,0.15)', padding: '0.2rem 0.6rem', borderRadius: '12px' }}>
+                      {lastSyncStatus}
+                    </span>
+                  )}
                 </div>
-                <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '1rem' }}>
-                  Fetch and reload the most up-to-date portfolio data directly from the configured Storage Bucket or static JSON endpoint.
+                <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '1.25rem' }}>
+                  When you push to the bucket, the remote <code>portfolioData.json</code> is modified. When any visitor loads your website, it reads directly from this bucket URL.
                 </p>
-                <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
+
+                <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap', marginBottom: '1.25rem' }}>
+                  <button
+                    onClick={handlePushToBucket}
+                    className="btn btn-primary btn-sm"
+                    disabled={isPushing}
+                    style={{
+                      background: 'linear-gradient(135deg, #06b6d4, #6366f1)',
+                      boxShadow: '0 4px 15px rgba(6, 182, 212, 0.3)',
+                    }}
+                  >
+                    <UploadCloud size={15} className={isPushing ? 'animate-spin' : ''} />
+                    <span>{isPushing ? 'Pushing to Bucket...' : 'Push Changes to Cloud Bucket Now'}</span>
+                  </button>
+
                   <button
                     onClick={handleSyncStorageBucket}
-                    className="btn btn-primary btn-sm"
+                    className="btn btn-secondary btn-sm"
                     disabled={isSyncing}
                   >
                     <RefreshCw size={14} className={isSyncing ? 'animate-spin' : ''} />
-                    <span>{isSyncing ? 'Syncing...' : 'Sync from Storage Bucket Now'}</span>
+                    <span>{isSyncing ? 'Pulling...' : 'Pull / Read from Bucket Now'}</span>
                   </button>
+
+                  <button
+                    onClick={handlePushToBox}
+                    className="btn btn-secondary btn-sm"
+                    style={{ gap: '0.4rem' }}
+                  >
+                    <UploadCloud size={14} />
+                    <span>Push to Box Bucket</span>
+                  </button>
+
+                  <button
+                    onClick={handleInitializeBoxBucket}
+                    className="btn btn-secondary btn-sm"
+                    style={{ gap: '0.4rem', border: '1px solid var(--primary)', color: 'var(--primary)' }}
+                    title="Initialize Box Bucket with default portfolioData.json and CV.pdf"
+                  >
+                    <Layers size={14} />
+                    <span>Create Defaults & CV on Box</span>
+                  </button>
+
+                  <button
+                    onClick={() => handleTestBucket()}
+                    className="btn btn-secondary btn-sm"
+                    disabled={bucketTestState.testing}
+                  >
+                    <Zap size={14} />
+                    <span>{bucketTestState.testing ? 'Testing...' : 'Test Connection'}</span>
+                  </button>
+
+                  <button
+                    onClick={handleTestBox}
+                    className="btn btn-secondary btn-sm"
+                    disabled={bucketTestState.testing}
+                  >
+                    <Zap size={14} />
+                    <span>Test Box Token</span>
+                  </button>
+                </div>
+
+                {bucketTestState.message && (
+                  <div
+                    style={{
+                      padding: '0.7rem 1rem',
+                      borderRadius: 'var(--radius-sm)',
+                      background: bucketTestState.isSuccess ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+                      border: `1px solid ${bucketTestState.isSuccess ? 'rgba(16, 185, 129, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`,
+                      color: bucketTestState.isSuccess ? '#34d399' : '#f87171',
+                      fontSize: '0.85rem',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.5rem',
+                      marginBottom: '1rem',
+                    }}
+                  >
+                    {bucketTestState.isSuccess ? <Check size={16} /> : <AlertCircle size={16} />}
+                    <span>{bucketTestState.message}</span>
+                  </div>
+                )}
+
+                {/* Bucket Presets */}
+                <div style={{ marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: '1px solid rgba(255, 255, 255, 0.08)' }}>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>
+                    Quick Preset Endpoints:
+                  </div>
+                  <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setProfileForm((prev) => ({
+                          ...prev,
+                          storageBucketDataUrl: DEFAULT_STORAGE_BUCKET_URL,
+                          storageBucketUploadUrl: DEFAULT_STORAGE_BUCKET_UPLOAD_URL,
+                        }));
+                        showToast('Set to Firebase Storage preset!');
+                      }}
+                      className="btn btn-secondary btn-sm"
+                      style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
+                    >
+                      Firebase Storage (Default)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setProfileForm((prev) => ({
+                          ...prev,
+                          storageBucketDataUrl: LOCAL_JSON_FALLBACK_URL,
+                          storageBucketUploadUrl: LOCAL_JSON_FALLBACK_URL,
+                        }));
+                        showToast('Set to Local Fallback JSON preset!');
+                      }}
+                      className="btn btn-secondary btn-sm"
+                      style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
+                    >
+                      Local Static Fallback
+                    </button>
+                  </div>
                 </div>
               </div>
 
