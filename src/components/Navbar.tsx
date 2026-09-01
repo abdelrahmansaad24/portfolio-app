@@ -108,7 +108,7 @@ export const Navbar: React.FC = () => {
           ))}
 
           <a
-            href={data.profile.resumeUrl || '/CV.pdf'}
+            href={data.profile.resumeUrl || '/cv/CV.pdf'}
             download="Abdelrahman_Saad_CV.pdf"
             className="btn btn-primary btn-sm"
             style={{ textDecoration: 'none' }}
@@ -164,7 +164,7 @@ export const Navbar: React.FC = () => {
             </a>
           ))}
           <a
-            href={data.profile.resumeUrl || '/CV.pdf'}
+            href={data.profile.resumeUrl || '/cv/CV.pdf'}
             download="Abdelrahman_Saad_CV.pdf"
             className="btn btn-primary"
             style={{ marginTop: '0.5rem' }}

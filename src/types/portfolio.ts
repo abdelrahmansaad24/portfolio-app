@@ -51,6 +51,7 @@ export interface ProfileInfo {
   github: string;
   avatarUrl?: string;
   resumeUrl: string;
+  storageBucketDataUrl?: string;
   boxStorageApiKey?: string;
   boxFolderId?: string;
 }

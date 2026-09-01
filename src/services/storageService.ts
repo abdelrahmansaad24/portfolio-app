@@ -3,6 +3,9 @@ import { initialPortfolioData } from '../data/initialData';
 
 const STORAGE_KEY = 'abdelrahman_portfolio_data_v1';
 const ADMIN_AUTH_KEY = 'abdelrahman_admin_session';
+export const DEFAULT_STORAGE_BUCKET_URL =
+  'https://firebasestorage.googleapis.com/v0/b/portfolio-77dbd.appspot.com/o/data%2FportfolioData.json?alt=media';
+export const LOCAL_JSON_FALLBACK_URL = '/data/portfolioData.json';
 
 export class StorageService {
   /**
@@ -12,12 +15,66 @@ export class StorageService {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {
-        return JSON.parse(saved);
+        const parsed = JSON.parse(saved);
+        if (parsed && parsed.profile && parsed.projects) {
+          return parsed;
+        }
       }
     } catch (e) {
       console.error('Error loading portfolio data from localStorage', e);
     }
     return initialPortfolioData;
+  }
+
+  /**
+   * Fetch portfolio data from storage bucket / remote JSON endpoint
+   * Tries provided URL, localStorage configured URL, remote Firebase bucket, or local JSON.
+   */
+  static async fetchRemotePortfolioData(customUrl?: string): Promise<PortfolioData | null> {
+    const urlsToTry: string[] = [];
+
+    if (customUrl && customUrl.trim() !== '') {
+      urlsToTry.push(customUrl.trim());
+    }
+
+    try {
+      const localData = this.getPortfolioData();
+      if (localData?.profile?.storageBucketDataUrl && !urlsToTry.includes(localData.profile.storageBucketDataUrl)) {
+        urlsToTry.push(localData.profile.storageBucketDataUrl.trim());
+      }
+    } catch {
+      // ignore
+    }
+
+    if (import.meta.env.VITE_STORAGE_DATA_URL && !urlsToTry.includes(import.meta.env.VITE_STORAGE_DATA_URL)) {
+      urlsToTry.push(import.meta.env.VITE_STORAGE_DATA_URL);
+    }
+
+    if (!urlsToTry.includes(DEFAULT_STORAGE_BUCKET_URL)) {
+      urlsToTry.push(DEFAULT_STORAGE_BUCKET_URL);
+    }
+
+    if (!urlsToTry.includes(LOCAL_JSON_FALLBACK_URL)) {
+      urlsToTry.push(LOCAL_JSON_FALLBACK_URL);
+    }
+
+    for (const url of urlsToTry) {
+      try {
+        const response = await fetch(url, { cache: 'no-cache' });
+        if (response.ok) {
+          const fetchedData = await response.json();
+          if (fetchedData && fetchedData.profile && Array.isArray(fetchedData.projects)) {
+            // Save to localStorage for instant offline access & caching
+            this.savePortfolioData(fetchedData);
+            return fetchedData as PortfolioData;
+          }
+        }
+      } catch (err) {
+        console.warn(`Could not load portfolio data from ${url}:`, err);
+      }
+    }
+
+    return null;
   }
 
   /**
@@ -140,6 +197,48 @@ export class StorageService {
     }
 
     // Fallback to Data URL (Base64)
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = (error) => reject(error);
+      reader.readAsDataURL(file);
+    });
+  }
+
+  /**
+   * Upload CV / Document (PDF or document file)
+   */
+  static async uploadDocumentFile(file: File, boxToken?: string, boxFolderId: string = '0'): Promise<string> {
+    if (boxToken && boxToken.trim() !== '') {
+      try {
+        const formData = new FormData();
+        const attributes = JSON.stringify({
+          name: `${Date.now()}_${file.name}`,
+          parent: { id: boxFolderId || '0' }
+        });
+        formData.append('attributes', attributes);
+        formData.append('file', file);
+
+        const response = await fetch('https://upload.box.com/api/2.0/files/content', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${boxToken.trim()}`
+          },
+          body: formData
+        });
+
+        if (response.ok) {
+          const result = await response.json();
+          if (result.entries && result.entries.length > 0) {
+            const fileId = result.entries[0].id;
+            return `https://app.box.com/embed/s/${fileId}`;
+          }
+        }
+      } catch (err) {
+        console.warn('Box document upload failed, falling back to base64 Data URL', err);
+      }
+    }
+
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => resolve(reader.result as string);

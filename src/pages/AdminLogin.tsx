@@ -19,7 +19,7 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({ onLoginSuccess }) => {
       setError('');
       onLoginSuccess();
     } else {
-      setError('Invalid admin credentials. (Hint: user "admin" / pass "password123")');
+      setError('Invalid admin credentials.');
     }
   };
 

@@ -134,7 +134,7 @@ export const Hero: React.FC = () => {
               }}
             >
               <a
-                href={data.profile.resumeUrl || '/CV.pdf'}
+                href={data.profile.resumeUrl || '/cv/CV.pdf'}
                 download="Abdelrahman_Saad_CV.pdf"
                 onClick={handleDownloadCV}
                 className="btn btn-primary"

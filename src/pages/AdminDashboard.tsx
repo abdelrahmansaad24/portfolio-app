@@ -18,10 +18,13 @@ import {
   Download,
   RotateCcw,
   Layers,
+  RefreshCw,
+  FileText,
+  Cloud,
 } from 'lucide-react';
 import { usePortfolio } from '../context/PortfolioContext';
 import type { Project, Experience, ProfileInfo, ProjectCategory } from '../types/portfolio';
-import { StorageService } from '../services/storageService';
+import { StorageService, DEFAULT_STORAGE_BUCKET_URL } from '../services/storageService';
 import { useNavigate } from 'react-router-dom';
 
 interface AdminDashboardProps {
@@ -31,6 +34,7 @@ interface AdminDashboardProps {
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
   const {
     data,
+    isSyncing,
     updateProfile,
     addProject,
     updateProject,
@@ -41,6 +45,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     updateSkillCategories,
     resetToDefaults,
     importPortfolioData,
+    syncWithStorageBucket,
   } = usePortfolio();
 
   const navigate = useNavigate();
@@ -238,6 +243,37 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
   };
 
   // --- Profile Handlers ---
+  const handleCvFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsUploading(true);
+    try {
+      const url = await StorageService.uploadDocumentFile(
+        file,
+        data.profile.boxStorageApiKey,
+        data.profile.boxFolderId
+      );
+      setProfileForm((prev) => ({ ...prev, resumeUrl: url }));
+      showToast('CV / Resume uploaded successfully!');
+    } catch (err) {
+      console.error('CV upload error:', err);
+      showToast('Error uploading CV file');
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const handleSyncStorageBucket = async () => {
+    const targetUrl = profileForm.storageBucketDataUrl || DEFAULT_STORAGE_BUCKET_URL;
+    const success = await syncWithStorageBucket(targetUrl);
+    if (success) {
+      setProfileForm({ ...data.profile });
+      showToast('Synced latest data from Storage Bucket!');
+    } else {
+      showToast('Could not fetch data from storage bucket URL.');
+    }
+  };
+
   const handleSaveProfile = (e: React.FormEvent) => {
     e.preventDefault();
     updateProfile(profileForm);
@@ -258,8 +294,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
       try {
         const parsed = JSON.parse(event.target?.result as string);
         importPortfolioData(parsed);
+        setProfileForm(parsed.profile);
         showToast('Portfolio data restored from backup!');
       } catch (err) {
+        console.error('Import parse error:', err);
         alert('Invalid JSON file format.');
       }
     };
@@ -751,6 +789,82 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                 </div>
               </div>
 
+              {/* CV / Resume & Document Management */}
+              <div
+                style={{
+                  marginTop: '1.5rem',
+                  padding: '1.25rem',
+                  background: 'rgba(56, 189, 248, 0.05)',
+                  border: '1px solid rgba(56, 189, 248, 0.2)',
+                  borderRadius: 'var(--radius-md)',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                  <FileText size={18} color="#38bdf8" />
+                  <h4 style={{ fontSize: '1rem' }}>CV / Resume Configuration</h4>
+                </div>
+                <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginBottom: '1rem' }}>
+                  The CV is stored in the dedicated <code>/cv/CV.pdf</code> folder or can be pointed directly to any storage bucket URL.
+                </p>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr', gap: '1rem' }} className="form-row">
+                  <div className="form-group">
+                    <label className="form-label">CV / Resume URL or Path</label>
+                    <input
+                      type="text"
+                      placeholder="/cv/CV.pdf"
+                      value={profileForm.resumeUrl || ''}
+                      onChange={(e) => setProfileForm({ ...profileForm, resumeUrl: e.target.value })}
+                      className="form-control"
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label">Upload New CV File (.pdf)</label>
+                    <input
+                      type="file"
+                      accept=".pdf,.doc,.docx"
+                      onChange={handleCvFileUpload}
+                      className="form-control"
+                      disabled={isUploading}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Storage Bucket & Remote Data URL */}
+              <div
+                style={{
+                  marginTop: '1.5rem',
+                  padding: '1.25rem',
+                  background: 'rgba(99, 102, 241, 0.05)',
+                  border: '1px solid rgba(99, 102, 241, 0.2)',
+                  borderRadius: 'var(--radius-md)',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                  <Cloud size={18} color="#818cf8" />
+                  <h4 style={{ fontSize: '1rem' }}>Storage Bucket Data URL</h4>
+                </div>
+                <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginBottom: '1rem' }}>
+                  Link to your Firebase Storage Bucket, S3, or CDN JSON dataset. The app automatically fetches and caches this data on startup.
+                </p>
+
+                <div className="form-group">
+                  <label className="form-label">Remote Storage Bucket JSON URL</label>
+                  <input
+                    type="text"
+                    placeholder={DEFAULT_STORAGE_BUCKET_URL}
+                    value={profileForm.storageBucketDataUrl || ''}
+                    onChange={(e) => setProfileForm({ ...profileForm, storageBucketDataUrl: e.target.value })}
+                    className="form-control"
+                  />
+                  <small style={{ color: 'var(--text-muted)', display: 'block', marginTop: '0.35rem' }}>
+                    Default Bucket: <code>{DEFAULT_STORAGE_BUCKET_URL}</code> | Fallback: <code>/data/portfolioData.json</code>
+                  </small>
+                </div>
+              </div>
+
               {/* Box Storage Configuration */}
               <div
                 style={{
@@ -806,17 +920,45 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
         {activeTab === 'backup' && (
           <div style={{ maxWidth: '750px' }}>
             <div style={{ marginBottom: '1.5rem' }}>
-              <h3 style={{ fontSize: '1.5rem' }}>Backup, Migration & Factory Reset</h3>
+              <h3 style={{ fontSize: '1.5rem' }}>Storage Bucket, Backup & Factory Reset</h3>
               <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-                Export your portfolio dataset as a single JSON file or import previously saved backups.
+                Sync live data with your remote Storage Bucket, export JSON backups, or import snapshots.
               </p>
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+              {/* Storage Bucket Sync Card */}
+              <div
+                className="glass-card"
+                style={{
+                  padding: '1.75rem',
+                  border: '1px solid rgba(99, 102, 241, 0.3)',
+                  background: 'rgba(99, 102, 241, 0.05)',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.5rem' }}>
+                  <Cloud size={20} color="#818cf8" />
+                  <h4 style={{ fontSize: '1.15rem' }}>Live Storage Bucket Sync</h4>
+                </div>
+                <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '1rem' }}>
+                  Fetch and reload the most up-to-date portfolio data directly from the configured Storage Bucket or static JSON endpoint.
+                </p>
+                <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                  <button
+                    onClick={handleSyncStorageBucket}
+                    className="btn btn-primary btn-sm"
+                    disabled={isSyncing}
+                  >
+                    <RefreshCw size={14} className={isSyncing ? 'animate-spin' : ''} />
+                    <span>{isSyncing ? 'Syncing...' : 'Sync from Storage Bucket Now'}</span>
+                  </button>
+                </div>
+              </div>
+
               <div className="glass-card" style={{ padding: '1.75rem' }}>
                 <h4 style={{ fontSize: '1.15rem', marginBottom: '0.5rem' }}>Export Portfolio (JSON)</h4>
                 <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '1rem' }}>
-                  Download all your projects, experience logs, skills, and configuration as a single JSON backup.
+                  Download all your projects, experience logs, skills, and configuration as a single JSON backup. You can upload this JSON to your Firebase/Cloud Storage bucket anytime.
                 </p>
                 <button onClick={handleExportJson} className="btn btn-primary btn-sm">
                   <Download size={14} />
