@@ -26,6 +26,15 @@ import {
   AlertCircle,
   Zap,
   Radio,
+  MessageSquare,
+  Mail,
+  User,
+  Clock,
+  Eye,
+  EyeOff,
+  Reply,
+  Inbox,
+  Filter,
 } from 'lucide-react';
 import { usePortfolio } from '../context/PortfolioContext';
 import type { Project, Experience, ProfileInfo, ProjectCategory } from '../types/portfolio';
@@ -60,11 +69,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     syncWithDatabase,
     pushToBoxStorage,
     initializeBoxBucket,
+    messages,
+    markMessageRead,
+    deleteMessage,
+    refreshMessages,
+    sendMessage,
   } = usePortfolio();
 
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState<'projects' | 'experience' | 'skills' | 'profile' | 'backup'>('projects');
+  const [activeTab, setActiveTab] = useState<'projects' | 'experience' | 'skills' | 'profile' | 'messages' | 'backup'>('projects');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [messageFilter, setMessageFilter] = useState<'all' | 'unread' | 'read'>('all');
+  const [searchQuery, setSearchQuery] = useState('');
   const [bucketTestState, setBucketTestState] = useState<{ testing: boolean; message: string | null; isSuccess?: boolean }>({
     testing: false,
     message: null,
@@ -73,6 +89,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     testing: false,
     message: null,
   });
+
+  const unreadCount = messages.filter((m) => !m.read).length;
 
   // Project Modal State
   const [isProjectModalOpen, setIsProjectModalOpen] = useState(false);
@@ -311,6 +329,39 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
       message: res.message,
       isSuccess: res.success,
     });
+  };
+
+  const handleToggleRead = async (id: string, currentRead?: boolean) => {
+    await markMessageRead(id, !currentRead);
+    showToast(currentRead ? 'Message marked as unread' : 'Message marked as read');
+  };
+
+  const handleDeleteMessage = async (id: string, senderName: string) => {
+    if (window.confirm(`Are you sure you want to delete message from "${senderName}"?`)) {
+      await deleteMessage(id);
+      showToast('Message deleted successfully');
+    }
+  };
+
+  const handleRefreshMessages = async () => {
+    await refreshMessages();
+    showToast('Messages refreshed from MongoDB Atlas');
+  };
+
+  const handleSendTestMessage = async () => {
+    showToast('Sending test message to MongoDB Atlas...');
+    const testMsg = {
+      name: 'Sarah Connor (Test Recruiter)',
+      email: 'sarah.connor@cyberdyne.io',
+      subject: 'Senior Full-Stack Engineer Opportunity',
+      message: 'Hi Abdelrahman, we were impressed by your CloudGate and Attend projects and would love to discuss a Senior Engineering role with our team!',
+    };
+    const res = await sendMessage(testMsg);
+    if (res.success) {
+      showToast('Test inquiry received & saved into MongoDB Atlas!');
+    } else {
+      showToast(`Error: ${res.message}`);
+    }
   };
 
 
@@ -612,6 +663,30 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
           >
             <UserCheck size={16} />
             <span>Profile & CV</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('messages')}
+            className={`btn btn-sm ${activeTab === 'messages' ? 'btn-primary' : 'btn-secondary'}`}
+            style={{ gap: '0.5rem', position: 'relative' }}
+          >
+            <MessageSquare size={16} />
+            <span>Messages ({messages.length})</span>
+            {unreadCount > 0 && (
+              <span
+                style={{
+                  background: '#ef4444',
+                  color: '#ffffff',
+                  fontSize: '0.68rem',
+                  padding: '0.1rem 0.45rem',
+                  borderRadius: '10px',
+                  fontWeight: 800,
+                  boxShadow: '0 0 8px rgba(239, 68, 68, 0.6)',
+                }}
+              >
+                {unreadCount}
+              </span>
+            )}
           </button>
 
           <button
@@ -1239,7 +1314,387 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
           </div>
         )}
 
-        {/* TAB 5: MONGODB & BACKUPS */}
+        {/* TAB 5: MESSAGES (CONTACT INQUIRIES) */}
+        {activeTab === 'messages' && (
+          <div>
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'flex-start',
+                marginBottom: '1.5rem',
+                flexWrap: 'wrap',
+                gap: '1rem',
+              }}
+            >
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.25rem' }}>
+                  <h3 style={{ fontSize: '1.5rem' }}>Client & Recruiter Inquiries</h3>
+                  {unreadCount > 0 && (
+                    <span
+                      style={{
+                        background: '#ef4444',
+                        color: '#ffffff',
+                        fontSize: '0.75rem',
+                        padding: '0.15rem 0.6rem',
+                        borderRadius: '12px',
+                        fontWeight: 700,
+                      }}
+                    >
+                      {unreadCount} Unread
+                    </span>
+                  )}
+                </div>
+                <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                  Direct messages submitted through your portfolio contact form, stored live in MongoDB Atlas.
+                </p>
+              </div>
+
+              <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap' }}>
+                <button
+                  onClick={handleRefreshMessages}
+                  className="btn btn-secondary btn-sm"
+                  style={{ gap: '0.4rem' }}
+                >
+                  <RefreshCw size={14} />
+                  <span>Refresh Messages</span>
+                </button>
+                <button
+                  onClick={handleSendTestMessage}
+                  className="btn btn-primary btn-sm"
+                  style={{
+                    gap: '0.4rem',
+                    background: 'linear-gradient(135deg, #10b981, #06b6d4)',
+                  }}
+                >
+                  <Plus size={14} />
+                  <span>Send Test Message</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Filter and Search Bar */}
+            <div
+              className="glass-card"
+              style={{
+                padding: '1rem 1.25rem',
+                marginBottom: '1.5rem',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                flexWrap: 'wrap',
+                gap: '1rem',
+              }}
+            >
+              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                  <Filter size={13} /> Filter:
+                </span>
+                <button
+                  onClick={() => setMessageFilter('all')}
+                  className={`btn btn-sm ${messageFilter === 'all' ? 'btn-primary' : 'btn-secondary'}`}
+                  style={{ fontSize: '0.78rem', padding: '0.25rem 0.65rem' }}
+                >
+                  All ({messages.length})
+                </button>
+                <button
+                  onClick={() => setMessageFilter('unread')}
+                  className={`btn btn-sm ${messageFilter === 'unread' ? 'btn-primary' : 'btn-secondary'}`}
+                  style={{ fontSize: '0.78rem', padding: '0.25rem 0.65rem' }}
+                >
+                  Unread ({unreadCount})
+                </button>
+                <button
+                  onClick={() => setMessageFilter('read')}
+                  className={`btn btn-sm ${messageFilter === 'read' ? 'btn-primary' : 'btn-secondary'}`}
+                  style={{ fontSize: '0.78rem', padding: '0.25rem 0.65rem' }}
+                >
+                  Read ({messages.length - unreadCount})
+                </button>
+              </div>
+
+              <div style={{ minWidth: '220px', flexGrow: 1, maxWidth: '350px' }}>
+                <input
+                  type="text"
+                  placeholder="Search sender, email, subject..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="form-control"
+                  style={{ fontSize: '0.85rem', padding: '0.4rem 0.75rem' }}
+                />
+              </div>
+            </div>
+
+            {/* Messages List */}
+            {(() => {
+              const filtered = messages
+                .filter((m) => {
+                  if (messageFilter === 'unread') return !m.read;
+                  if (messageFilter === 'read') return !!m.read;
+                  return true;
+                })
+                .filter((m) => {
+                  if (!searchQuery.trim()) return true;
+                  const q = searchQuery.toLowerCase();
+                  return (
+                    m.name.toLowerCase().includes(q) ||
+                    m.email.toLowerCase().includes(q) ||
+                    m.subject.toLowerCase().includes(q) ||
+                    m.message.toLowerCase().includes(q)
+                  );
+                });
+
+              if (filtered.length === 0) {
+                return (
+                  <div
+                    className="glass-card"
+                    style={{
+                      padding: '3.5rem 2rem',
+                      textAlign: 'center',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      gap: '1rem',
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: '64px',
+                        height: '64px',
+                        borderRadius: '50%',
+                        background: 'rgba(6, 182, 212, 0.1)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                    >
+                      <Inbox size={32} color="var(--primary)" />
+                    </div>
+                    <h4 style={{ fontSize: '1.25rem', color: '#ffffff' }}>No Messages Found</h4>
+                    <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', maxWidth: '450px' }}>
+                      {searchQuery
+                        ? 'No messages match your search query.'
+                        : 'You have not received any inquiries yet. When visitors submit the contact form on your portfolio, their messages will appear here instantly!'}
+                    </p>
+                    <button
+                      onClick={handleSendTestMessage}
+                      className="btn btn-secondary btn-sm"
+                      style={{ gap: '0.4rem', marginTop: '0.5rem' }}
+                    >
+                      <Plus size={14} />
+                      <span>Send Sample Inquiry to DB</span>
+                    </button>
+                  </div>
+                );
+              }
+
+              return (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+                  {filtered.map((msg) => {
+                    const isUnread = !msg.read;
+                    const formattedDate = msg.createdAt
+                      ? new Date(msg.createdAt).toLocaleString(undefined, {
+                          month: 'short',
+                          day: 'numeric',
+                          year: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })
+                      : 'Recently';
+
+                    return (
+                      <div
+                        key={msg.id}
+                        className="glass-card"
+                        style={{
+                          padding: '1.5rem',
+                          border: isUnread
+                            ? '1px solid rgba(6, 182, 212, 0.5)'
+                            : '1px solid var(--border-glass)',
+                          background: isUnread ? 'rgba(6, 182, 212, 0.04)' : 'rgba(255, 255, 255, 0.02)',
+                          boxShadow: isUnread ? '0 4px 20px rgba(6, 182, 212, 0.15)' : 'none',
+                          transition: 'all 0.2s ease',
+                        }}
+                      >
+                        {/* Header Row */}
+                        <div
+                          style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'flex-start',
+                            marginBottom: '1rem',
+                            flexWrap: 'wrap',
+                            gap: '0.75rem',
+                          }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                            <div
+                              style={{
+                                width: '40px',
+                                height: '40px',
+                                borderRadius: '10px',
+                                background: isUnread
+                                  ? 'linear-gradient(135deg, #06b6d4, #10b981)'
+                                  : 'rgba(255, 255, 255, 0.08)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                fontWeight: 700,
+                                fontSize: '1.1rem',
+                                color: '#ffffff',
+                                flexShrink: 0,
+                              }}
+                            >
+                              {msg.name ? msg.name.charAt(0).toUpperCase() : 'U'}
+                            </div>
+
+                            <div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                                <h4 style={{ fontSize: '1.1rem', color: '#ffffff', margin: 0 }}>
+                                  {msg.name}
+                                </h4>
+                                {isUnread ? (
+                                  <span
+                                    style={{
+                                      fontSize: '0.68rem',
+                                      padding: '0.15rem 0.5rem',
+                                      borderRadius: '10px',
+                                      background: 'rgba(6, 182, 212, 0.2)',
+                                      color: '#38bdf8',
+                                      border: '1px solid rgba(6, 182, 212, 0.4)',
+                                      fontWeight: 700,
+                                    }}
+                                  >
+                                    NEW
+                                  </span>
+                                ) : (
+                                  <span
+                                    style={{
+                                      fontSize: '0.68rem',
+                                      padding: '0.15rem 0.5rem',
+                                      borderRadius: '10px',
+                                      background: 'rgba(255, 255, 255, 0.05)',
+                                      color: 'var(--text-muted)',
+                                    }}
+                                  >
+                                    Read
+                                  </span>
+                                )}
+                              </div>
+
+                              <a
+                                href={`mailto:${msg.email}?subject=Re: ${encodeURIComponent(msg.subject)}`}
+                                style={{
+                                  fontSize: '0.82rem',
+                                  color: 'var(--primary)',
+                                  textDecoration: 'none',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '0.3rem',
+                                  marginTop: '0.2rem',
+                                }}
+                              >
+                                <Mail size={12} />
+                                <span>{msg.email}</span>
+                              </a>
+                            </div>
+                          </div>
+
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-muted)', fontSize: '0.78rem' }}>
+                            <Clock size={13} />
+                            <span>{formattedDate}</span>
+                          </div>
+                        </div>
+
+                        {/* Subject Banner */}
+                        <div
+                          style={{
+                            fontSize: '0.92rem',
+                            fontWeight: 600,
+                            color: '#e2e8f0',
+                            marginBottom: '0.75rem',
+                            padding: '0.45rem 0.75rem',
+                            background: 'rgba(255, 255, 255, 0.03)',
+                            borderRadius: '6px',
+                            borderLeft: isUnread ? '3px solid var(--primary)' : '3px solid rgba(255,255,255,0.2)',
+                          }}
+                        >
+                          Subject: {msg.subject || 'Portfolio Inquiry'}
+                        </div>
+
+                        {/* Message Content */}
+                        <div
+                          style={{
+                            fontSize: '0.88rem',
+                            lineHeight: '1.6',
+                            color: '#cbd5e1',
+                            whiteSpace: 'pre-wrap',
+                            background: 'rgba(0, 0, 0, 0.25)',
+                            padding: '1rem',
+                            borderRadius: '8px',
+                            marginBottom: '1.25rem',
+                            border: '1px solid rgba(255, 255, 255, 0.04)',
+                          }}
+                        >
+                          {msg.message}
+                        </div>
+
+                        {/* Actions Footer */}
+                        <div
+                          style={{
+                            display: 'flex',
+                            justifyContent: 'flex-end',
+                            alignItems: 'center',
+                            gap: '0.6rem',
+                            flexWrap: 'wrap',
+                            borderTop: '1px solid rgba(255, 255, 255, 0.05)',
+                            paddingTop: '0.85rem',
+                          }}
+                        >
+                          <button
+                            onClick={() => handleToggleRead(msg.id, msg.read)}
+                            className="btn btn-secondary btn-sm"
+                            style={{ gap: '0.35rem', fontSize: '0.78rem' }}
+                            title={msg.read ? 'Mark as Unread' : 'Mark as Read'}
+                          >
+                            {msg.read ? <EyeOff size={13} /> : <Eye size={13} />}
+                            <span>{msg.read ? 'Mark Unread' : 'Mark Read'}</span>
+                          </button>
+
+                          <a
+                            href={`mailto:${msg.email}?subject=Re: ${encodeURIComponent(msg.subject)}`}
+                            className="btn btn-primary btn-sm"
+                            style={{
+                              gap: '0.35rem',
+                              fontSize: '0.78rem',
+                              background: 'linear-gradient(135deg, #06b6d4, #3b82f6)',
+                              textDecoration: 'none',
+                            }}
+                          >
+                            <Reply size={13} />
+                            <span>Reply via Email</span>
+                          </a>
+
+                          <button
+                            onClick={() => handleDeleteMessage(msg.id, msg.name)}
+                            className="btn btn-danger btn-sm"
+                            style={{ gap: '0.35rem', fontSize: '0.78rem' }}
+                            title="Delete this message from MongoDB"
+                          >
+                            <Trash2 size={13} />
+                            <span>Delete</span>
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
+          </div>
+        )}
+
+        {/* TAB 6: MONGODB & BACKUPS */}
         {activeTab === 'backup' && (
           <div style={{ maxWidth: '800px' }}>
             <div style={{ marginBottom: '1.5rem' }}>

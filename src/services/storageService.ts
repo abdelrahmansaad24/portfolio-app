@@ -1,4 +1,4 @@
-import type { PortfolioData } from '../types/portfolio';
+import type { PortfolioData, ContactMessage } from '../types/portfolio';
 import { initialPortfolioData } from '../data/initialData';
 import { BoxJwtService } from './boxJwtService';
 
@@ -707,6 +707,128 @@ export class StorageService {
         message: `Network error saving to MongoDB: ${err instanceof Error ? err.message : String(err)}`,
       };
     }
+  }
+
+  /**
+   * Submit a new contact message directly into MongoDB
+   */
+  static async sendMessage(msg: {
+    name: string;
+    email: string;
+    subject: string;
+    message: string;
+  }): Promise<{ success: boolean; message: string; data?: ContactMessage }> {
+    try {
+      const res = await fetch('/api/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify(msg),
+      });
+
+      if (res.ok) {
+        const result = await res.json();
+        // Also save to local storage messages cache
+        const local = this.getPortfolioData();
+        if (result.data) {
+          local.messages = [result.data, ...(local.messages || [])];
+          this.savePortfolioData(local);
+        }
+        return {
+          success: true,
+          message: 'Your message has been sent successfully!',
+          data: result.data,
+        };
+      }
+
+      const errData = await res.json().catch(() => ({}));
+      return {
+        success: false,
+        message: errData.error || errData.message || 'Failed to send message',
+      };
+    } catch (err) {
+      return {
+        success: false,
+        message: `Network error: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+  }
+
+  /**
+   * Fetch all messages from MongoDB
+   */
+  static async fetchMessages(): Promise<ContactMessage[]> {
+    try {
+      const res = await fetch(`/api/messages?_t=${Date.now()}`, {
+        cache: 'no-store',
+        headers: { Accept: 'application/json' },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data && Array.isArray(data.messages)) {
+          const local = this.getPortfolioData();
+          local.messages = data.messages;
+          this.savePortfolioData(local);
+          return data.messages;
+        }
+      }
+    } catch (err) {
+      console.warn('Error fetching messages from API:', err);
+    }
+    const local = this.getPortfolioData();
+    return local.messages || [];
+  }
+
+  /**
+   * Mark message as read/unread in MongoDB
+   */
+  static async markMessageRead(id: string, read: boolean = true): Promise<boolean> {
+    try {
+      const res = await fetch('/api/messages', {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({ id, read }),
+      });
+      if (res.ok) {
+        const local = this.getPortfolioData();
+        if (local.messages) {
+          local.messages = local.messages.map((m) => (m.id === id ? { ...m, read } : m));
+          this.savePortfolioData(local);
+        }
+        return true;
+      }
+    } catch (err) {
+      console.warn('Error marking message read:', err);
+    }
+    return false;
+  }
+
+  /**
+   * Delete message by ID from MongoDB
+   */
+  static async deleteMessage(id: string): Promise<boolean> {
+    try {
+      const res = await fetch(`/api/messages?id=${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        headers: { Accept: 'application/json' },
+      });
+      if (res.ok) {
+        const local = this.getPortfolioData();
+        if (local.messages) {
+          local.messages = local.messages.filter((m) => m.id !== id);
+          this.savePortfolioData(local);
+        }
+        return true;
+      }
+    } catch (err) {
+      console.warn('Error deleting message:', err);
+    }
+    return false;
   }
 
   /**

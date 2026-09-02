@@ -452,5 +452,6 @@ export const initialPortfolioData: PortfolioData = {
         }
       ]
     }
-  ]
+  ],
+  messages: []
 };

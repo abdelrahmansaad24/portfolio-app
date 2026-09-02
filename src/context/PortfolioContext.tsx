@@ -1,9 +1,17 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
-import type { PortfolioData, Project, Experience, SkillCategory, ProfileInfo } from '../types/portfolio';
+import type {
+  PortfolioData,
+  Project,
+  Experience,
+  SkillCategory,
+  ProfileInfo,
+  ContactMessage,
+} from '../types/portfolio';
 import { StorageService, type BucketPushResult } from '../services/storageService';
 
 interface PortfolioContextType {
   data: PortfolioData;
+  messages: ContactMessage[];
   isSyncing: boolean;
   isPushing: boolean;
   lastSyncStatus: string | null;
@@ -23,12 +31,17 @@ interface PortfolioContextType {
   pushToStorageBucket: (overrideData?: PortfolioData) => Promise<BucketPushResult>;
   pushToBoxStorage: (overrideData?: PortfolioData) => Promise<BucketPushResult>;
   initializeBoxBucket: () => Promise<BucketPushResult>;
+  sendMessage: (msg: { name: string; email: string; subject: string; message: string }) => Promise<{ success: boolean; message: string }>;
+  markMessageRead: (id: string, read?: boolean) => Promise<void>;
+  deleteMessage: (id: string) => Promise<void>;
+  refreshMessages: () => Promise<void>;
 }
 
 const PortfolioContext = createContext<PortfolioContextType | undefined>(undefined);
 
 export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [data, setData] = useState<PortfolioData>(() => StorageService.getPortfolioData());
+  const [messages, setMessages] = useState<ContactMessage[]>(() => data.messages || []);
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [isPushing, setIsPushing] = useState<boolean>(false);
   const [lastSyncStatus, setLastSyncStatus] = useState<string | null>(null);
@@ -44,6 +57,9 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         const remoteData = await StorageService.fetchRemotePortfolioData();
         if (remoteData && isMounted) {
           setData(remoteData);
+          if (Array.isArray(remoteData.messages)) {
+            setMessages(remoteData.messages);
+          }
           setLastSyncStatus('Live data loaded from MongoDB Atlas');
         }
       } catch (e) {
@@ -63,13 +79,13 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   // Save to localStorage immediately on any state change
   useEffect(() => {
-    StorageService.savePortfolioData(data);
-  }, [data]);
+    StorageService.savePortfolioData({ ...data, messages });
+  }, [data, messages]);
 
   // Save directly to MongoDB Atlas
   const saveToMongoDB = useCallback(
     async (overrideData?: PortfolioData): Promise<BucketPushResult> => {
-      const dataToSave = overrideData || data;
+      const dataToSave = overrideData || { ...data, messages };
       setIsPushing(true);
       try {
         const res = await StorageService.savePortfolioDataToMongo(dataToSave);
@@ -83,7 +99,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setIsPushing(false);
       }
     },
-    [data]
+    [data, messages]
   );
 
   // Auto-Save: Whenever data is modified after initial mount/fetch, automatically persist to MongoDB Atlas
@@ -99,7 +115,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const timer = setTimeout(async () => {
       try {
         setIsPushing(true);
-        const res = await StorageService.savePortfolioDataToMongo(data);
+        const res = await StorageService.savePortfolioDataToMongo({ ...data, messages });
         if (res.success) {
           setLastSyncStatus('Auto-saved to MongoDB Atlas');
         } else {
@@ -113,7 +129,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }, 700);
 
     return () => clearTimeout(timer);
-  }, [data]);
+  }, [data, messages]);
 
   // Manual Sync / Pull from MongoDB Atlas
   const syncWithDatabase = useCallback(async (): Promise<boolean> => {
@@ -122,6 +138,9 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       const remoteData = await StorageService.fetchRemotePortfolioData();
       if (remoteData) {
         setData(remoteData);
+        if (Array.isArray(remoteData.messages)) {
+          setMessages(remoteData.messages);
+        }
         setLastSyncStatus('Successfully refreshed from MongoDB Atlas');
         return true;
       }
@@ -134,10 +153,44 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     return false;
   }, []);
 
+  // Fetch / Refresh Messages from MongoDB
+  const refreshMessages = useCallback(async (): Promise<void> => {
+    try {
+      const msgs = await StorageService.fetchMessages();
+      setMessages(msgs);
+    } catch (err) {
+      console.warn('Error refreshing messages:', err);
+    }
+  }, []);
+
+  // Send message from Contact Form
+  const sendMessage = useCallback(
+    async (msg: { name: string; email: string; subject: string; message: string }): Promise<{ success: boolean; message: string }> => {
+      const res = await StorageService.sendMessage(msg);
+      if (res.success && res.data) {
+        setMessages((prev) => [res.data!, ...prev]);
+      }
+      return res;
+    },
+    []
+  );
+
+  // Mark Message as Read/Unread
+  const markMessageRead = useCallback(async (id: string, read: boolean = true): Promise<void> => {
+    setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, read } : m)));
+    await StorageService.markMessageRead(id, read);
+  }, []);
+
+  // Delete Message
+  const deleteMessage = useCallback(async (id: string): Promise<void> => {
+    setMessages((prev) => prev.filter((m) => m.id !== id));
+    await StorageService.deleteMessage(id);
+  }, []);
+
   // Push directly to Box Storage Account
   const pushToBoxStorage = useCallback(
     async (overrideData?: PortfolioData): Promise<BucketPushResult> => {
-      const dataToPush = overrideData || data;
+      const dataToPush = overrideData || { ...data, messages };
       setIsPushing(true);
       try {
         const boxToken = await StorageService.getBoxToken(undefined, dataToPush);
@@ -166,7 +219,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setIsPushing(false);
       }
     },
-    [data]
+    [data, messages]
   );
 
   // Initialize Box Bucket with default data and default CV
@@ -198,7 +251,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   // Push to all active storage backends
   const pushToStorageBucket = useCallback(
     async (overrideData?: PortfolioData): Promise<BucketPushResult> => {
-      const dataToPush = overrideData || data;
+      const dataToPush = overrideData || { ...data, messages };
       setIsPushing(true);
       try {
         // Persist to MongoDB
@@ -236,7 +289,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setIsPushing(false);
       }
     },
-    [data]
+    [data, messages]
   );
 
   const syncWithStorageBucket = async (_customUrl?: string): Promise<boolean> => {
@@ -307,12 +360,16 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const resetToDefaults = () => {
     const defaults = StorageService.resetToDefault();
     setData(defaults);
+    setMessages([]);
     setLastSyncStatus('Reset to default values');
   };
 
   const importPortfolioData = (imported: PortfolioData) => {
     if (imported && imported.profile && imported.projects) {
       setData(imported);
+      if (Array.isArray(imported.messages)) {
+        setMessages(imported.messages);
+      }
       StorageService.savePortfolioData(imported);
       StorageService.savePortfolioDataToMongo(imported);
       setLastSyncStatus('Imported snapshot loaded & saved to MongoDB Atlas');
@@ -323,6 +380,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     <PortfolioContext.Provider
       value={{
         data,
+        messages,
         isSyncing,
         isPushing,
         lastSyncStatus,
@@ -342,6 +400,10 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         pushToStorageBucket,
         pushToBoxStorage,
         initializeBoxBucket,
+        sendMessage,
+        markMessageRead,
+        deleteMessage,
+        refreshMessages,
       }}
     >
       {children}

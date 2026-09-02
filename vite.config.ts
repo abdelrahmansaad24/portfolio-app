@@ -227,6 +227,16 @@ function backendApiPlugin(): Plugin {
                 // 1. Direct MongoDB update
                 const db = await getMongoDb();
                 const collection = db.collection(COLLECTION_NAME);
+
+                if (!Array.isArray(clean.messages)) {
+                  const existing = await collection.findOne({ _id: DOC_ID } as any);
+                  if (existing && Array.isArray((existing as any).messages)) {
+                    clean.messages = (existing as any).messages;
+                  } else {
+                    clean.messages = [];
+                  }
+                }
+
                 const result = await collection.updateOne(
                   { _id: DOC_ID } as any,
                   {
@@ -265,7 +275,167 @@ function backendApiPlugin(): Plugin {
           }
         }
 
-        // 4. CV / Resume Endpoint
+        // 4. Messages Endpoint (GET / POST / PATCH / DELETE)
+        if (urlWithoutQuery === '/api/messages') {
+          if (req.method === 'GET') {
+            try {
+              const db = await getMongoDb();
+              const collection = db.collection(COLLECTION_NAME);
+              const doc = await collection.findOne({ _id: DOC_ID } as any);
+              const messages = (doc && Array.isArray((doc as any).messages)) ? (doc as any).messages : [];
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ success: true, messages }));
+              return;
+            } catch (err) {
+              res.statusCode = 500;
+              res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+              return;
+            }
+          }
+
+          if (req.method === 'POST') {
+            let body = '';
+            req.on('data', (chunk) => {
+              body += chunk;
+            });
+            req.on('end', async () => {
+              try {
+                const parsed = JSON.parse(body);
+                const { name, email, subject, message } = parsed || {};
+                if (!name || !email || !message) {
+                  res.statusCode = 400;
+                  res.end(JSON.stringify({ error: 'Name, email, and message are required' }));
+                  return;
+                }
+
+                const newMessage = {
+                  id: `msg-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+                  name: name.trim(),
+                  email: email.trim(),
+                  subject: (subject || 'Portfolio Inquiry').trim(),
+                  message: message.trim(),
+                  createdAt: new Date().toISOString(),
+                  read: false,
+                };
+
+                const db = await getMongoDb();
+                const collection = db.collection(COLLECTION_NAME);
+                await collection.updateOne(
+                  { _id: DOC_ID } as any,
+                  {
+                    $push: {
+                      messages: {
+                        $each: [newMessage],
+                        $position: 0,
+                      },
+                    } as any,
+                    $set: {
+                      updatedAt: new Date().toISOString(),
+                    },
+                  },
+                  { upsert: true }
+                );
+
+                res.statusCode = 201;
+                res.setHeader('Content-Type', 'application/json');
+                res.end(
+                  JSON.stringify({
+                    success: true,
+                    message: 'Message sent and saved to MongoDB Atlas successfully!',
+                    data: newMessage,
+                  })
+                );
+              } catch (e) {
+                res.statusCode = 500;
+                res.end(JSON.stringify({ error: e instanceof Error ? e.message : String(e) }));
+              }
+            });
+            return;
+          }
+
+          if (req.method === 'PATCH') {
+            let body = '';
+            req.on('data', (chunk) => {
+              body += chunk;
+            });
+            req.on('end', async () => {
+              try {
+                const parsed = JSON.parse(body);
+                const { id, read } = parsed || {};
+                if (!id) {
+                  res.statusCode = 400;
+                  res.end(JSON.stringify({ error: 'Message ID is required' }));
+                  return;
+                }
+
+                const db = await getMongoDb();
+                const collection = db.collection(COLLECTION_NAME);
+                await collection.updateOne(
+                  { _id: DOC_ID, 'messages.id': id } as any,
+                  {
+                    $set: {
+                      'messages.$.read': read !== false,
+                      updatedAt: new Date().toISOString(),
+                    },
+                  }
+                );
+
+                res.setHeader('Content-Type', 'application/json');
+                res.end(JSON.stringify({ success: true, message: 'Message marked as read' }));
+              } catch (e) {
+                res.statusCode = 500;
+                res.end(JSON.stringify({ error: e instanceof Error ? e.message : String(e) }));
+              }
+            });
+            return;
+          }
+
+          if (req.method === 'DELETE') {
+            let body = '';
+            req.on('data', (chunk) => {
+              body += chunk;
+            });
+            req.on('end', async () => {
+              try {
+                const queryId = req.url ? new URL(req.url, 'http://localhost').searchParams.get('id') : null;
+                let messageId = queryId;
+                if (!messageId && body) {
+                  const parsed = JSON.parse(body);
+                  messageId = parsed.id;
+                }
+
+                if (!messageId) {
+                  res.statusCode = 400;
+                  res.end(JSON.stringify({ error: 'Message ID is required' }));
+                  return;
+                }
+
+                const db = await getMongoDb();
+                const collection = db.collection(COLLECTION_NAME);
+                await collection.updateOne(
+                  { _id: DOC_ID } as any,
+                  {
+                    $pull: {
+                      messages: { id: messageId },
+                    } as any,
+                    $set: {
+                      updatedAt: new Date().toISOString(),
+                    },
+                  }
+                );
+
+                res.setHeader('Content-Type', 'application/json');
+                res.end(JSON.stringify({ success: true, message: 'Message deleted successfully' }));
+              } catch (e) {
+                res.statusCode = 500;
+                res.end(JSON.stringify({ error: e instanceof Error ? e.message : String(e) }));
+              }
+            });
+            return;
+          }
+        }
+
+        // 5. CV / Resume Endpoint
         if (req.url === '/api/cv' || req.url === '/api/resume') {
           try {
             const tokenData = await generateBoxToken();

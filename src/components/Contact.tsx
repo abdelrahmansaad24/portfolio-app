@@ -4,23 +4,32 @@ import confetti from 'canvas-confetti';
 import { usePortfolio } from '../context/PortfolioContext';
 
 export const Contact: React.FC = () => {
-  const { data } = usePortfolio();
+  const { data, sendMessage } = usePortfolio();
   const [formData, setFormData] = useState({ name: '', email: '', subject: '', message: '' });
   const [submitted, setSubmitted] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setSubmitted(true);
-    confetti({
-      particleCount: 80,
-      spread: 60,
-      origin: { y: 0.7 },
-      colors: ['#06b6d4', '#10b981', '#8b5cf6'],
-    });
-    setTimeout(() => {
-      setSubmitted(false);
-      setFormData({ name: '', email: '', subject: '', message: '' });
-    }, 4000);
+    setIsSubmitting(true);
+    try {
+      await sendMessage(formData);
+      setSubmitted(true);
+      confetti({
+        particleCount: 80,
+        spread: 60,
+        origin: { y: 0.7 },
+        colors: ['#06b6d4', '#10b981', '#8b5cf6'],
+      });
+      setTimeout(() => {
+        setSubmitted(false);
+        setFormData({ name: '', email: '', subject: '', message: '' });
+      }, 4000);
+    } catch (err) {
+      console.error('Error submitting contact form:', err);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -275,9 +284,14 @@ export const Contact: React.FC = () => {
                   />
                 </div>
 
-                <button type="submit" className="btn btn-primary" style={{ width: '100%', marginTop: '0.5rem' }}>
-                  <Send size={16} />
-                  <span>Send Message</span>
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="btn btn-primary"
+                  style={{ width: '100%', marginTop: '0.5rem', gap: '0.5rem' }}
+                >
+                  <Send size={16} className={isSubmitting ? 'animate-spin' : ''} />
+                  <span>{isSubmitting ? 'Sending Message...' : 'Send Message'}</span>
                 </button>
               </form>
             )}
