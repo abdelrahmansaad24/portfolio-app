@@ -12,7 +12,7 @@ export const DEFAULT_BOX_CV_FILE_ID = '2440627671737';
 export const DEFAULT_BOX_FOLDER_URL = 'https://app.box.com/s/2uornst7s8djwchnahwvvenjueh43zta';
 
 export const DEFAULT_STORAGE_BUCKET_URL =
-  'https://app.box.com/shared/static/6bw5z2eva5bj1qb8405hmaed6npy5rmx.json';
+  'https://app.box.com/s/6bw5z2eva5bj1qb8405hmaed6npy5rmx';
 export const DEFAULT_BOX_CV_DOWNLOAD_URL =
   'https://app.box.com/shared/static/kcl8o7o4u3ih99g6myiunj6i8824kz3m.pdf';
 export const DEFAULT_STORAGE_BUCKET_UPLOAD_URL =

@@ -45,7 +45,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
   const {
     data,
     isSyncing,
-    isPushing,
     lastSyncStatus,
     updateProfile,
     addProject,
@@ -295,14 +294,26 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     }
   };
 
-  const handlePushToBucket = async () => {
-    showToast('Pushing latest data to Storage Bucket...');
-    const result = await pushToStorageBucket();
-    if (result.success) {
-      showToast('Data published to Storage Bucket successfully!');
-    } else {
-      showToast(`Warning: ${result.message}`);
-    }
+  const handlePushToBucket = () => {
+    const currentEditedData = {
+      ...data,
+      profile: {
+        ...data.profile,
+        ...profileForm,
+      },
+    };
+
+    const blob = new Blob([JSON.stringify(currentEditedData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'portfolioData.json';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    showToast('Downloaded current edited portfolioData.json successfully!');
   };
 
   const handleTestBucket = async (urlToTest?: string) => {
@@ -485,17 +496,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
 
           <button
             onClick={handlePushToBucket}
-            disabled={isPushing}
             className="btn btn-primary btn-sm"
             style={{
               gap: '0.4rem',
               background: 'linear-gradient(135deg, #06b6d4, #6366f1)',
               boxShadow: '0 4px 14px rgba(6, 182, 212, 0.3)',
             }}
-            title="Push and publish current changes directly to Storage Bucket"
+            title="Download current edited version as portfolioData.json"
           >
-            <UploadCloud size={14} className={isPushing ? 'animate-spin' : ''} />
-            <span>{isPushing ? 'Publishing...' : 'Push to Bucket'}</span>
+            <Download size={14} />
+            <span>Download Version</span>
           </button>
 
           <button
@@ -1242,14 +1252,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                   <button
                     onClick={handlePushToBucket}
                     className="btn btn-primary btn-sm"
-                    disabled={isPushing}
                     style={{
                       background: 'linear-gradient(135deg, #06b6d4, #6366f1)',
                       boxShadow: '0 4px 15px rgba(6, 182, 212, 0.3)',
+                      gap: '0.4rem',
                     }}
+                    title="Download current edited version as portfolioData.json"
                   >
-                    <UploadCloud size={15} className={isPushing ? 'animate-spin' : ''} />
-                    <span>{isPushing ? 'Pushing to Bucket...' : 'Push Changes to Cloud Bucket Now'}</span>
+                    <Download size={15} />
+                    <span>Download Current Edited Version (portfolioData.json)</span>
                   </button>
 
                   <button
