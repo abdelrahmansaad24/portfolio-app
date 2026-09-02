@@ -1,15 +1,10 @@
-import { generateBoxAccessToken } from './box-token.js';
-import fs from 'fs';
-import path from 'path';
-
-const BOX_USER_ID = process.env.BOX_USER_ID || '52559371009';
-const BOX_FILE_ID = process.env.VITE_BOX_FILE_ID || '2440626249336';
+import { getPortfolioFromDb, savePortfolioToDb } from './lib/mongodb.js';
 
 export default async function handler(req, res) {
   // CORS configuration
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,POST');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,POST,PUT');
   res.setHeader(
     'Access-Control-Allow-Headers',
     'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version, Authorization'
@@ -20,98 +15,45 @@ export default async function handler(req, res) {
     return;
   }
 
-  // GET: Fetch live portfolio data directly from Box file
+  // GET: Read portfolio data directly from MongoDB Atlas
   if (req.method === 'GET') {
     try {
-      const tokenData = await generateBoxAccessToken();
-      const token = tokenData?.access_token;
-      if (token) {
-        const boxRes = await fetch(`https://api.box.com/2.0/files/${BOX_FILE_ID}/content`, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'As-User': BOX_USER_ID,
-          },
-        });
-
-        if (boxRes.ok) {
-          const liveData = await boxRes.json();
-          res.setHeader('Content-Type', 'application/json');
-          res.setHeader('Cache-Control', 'public, s-maxage=5, stale-while-revalidate=30');
-          return res.status(200).json(liveData);
-        }
-      }
-    } catch (err) {
-      console.warn('Could not load portfolio data from Box API directly:', err);
-    }
-
-    // Fallback to local portfolioData.json
-    try {
-      const localPath = path.join(process.cwd(), 'public', 'data', 'portfolioData.json');
-      if (fs.existsSync(localPath)) {
-        const content = fs.readFileSync(localPath, 'utf8');
+      const data = await getPortfolioFromDb();
+      if (data && data.profile) {
         res.setHeader('Content-Type', 'application/json');
-        return res.status(200).send(content);
+        res.setHeader('Cache-Control', 'public, s-maxage=5, stale-while-revalidate=30');
+        return res.status(200).json(data);
       }
+      return res.status(404).json({ error: 'Portfolio data not found in MongoDB or fallback files' });
     } catch (err) {
-      console.warn('Fallback local read error:', err);
+      console.error('Error fetching portfolio data from MongoDB:', err);
+      return res.status(500).json({
+        error: 'Failed to retrieve portfolio data from MongoDB',
+        message: err instanceof Error ? err.message : String(err),
+      });
     }
-
-    return res.status(500).json({ error: 'Could not retrieve portfolio data' });
   }
 
-  // POST: Update portfolio data directly on Box file
-  if (req.method === 'POST') {
+  // POST or PUT: Save portfolio data directly to MongoDB Atlas
+  if (req.method === 'POST' || req.method === 'PUT') {
     try {
       const payload = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
       if (!payload || !payload.profile) {
-        return res.status(400).json({ error: 'Invalid payload: missing profile' });
+        return res.status(400).json({ error: 'Invalid payload: missing profile object' });
       }
 
-      const tokenData = await generateBoxAccessToken();
-      const token = tokenData?.access_token;
-      if (!token) {
-        return res.status(500).json({ error: 'Could not generate Box JWT token' });
-      }
+      const result = await savePortfolioToDb(payload);
 
-      const jsonBlob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-      const formData = new FormData();
-      formData.append('file', jsonBlob, 'portfolioData.json');
-
-      const updateRes = await fetch(`https://upload.box.com/api/2.0/files/${BOX_FILE_ID}/content`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'As-User': BOX_USER_ID,
-        },
-        body: formData,
-      });
-
-      if (!updateRes.ok) {
-        const errText = await updateRes.text();
-        return res.status(updateRes.status).json({
-          error: 'Box API update failed',
-          details: errText,
-        });
-      }
-
-      // Also persist to local file if possible
-      try {
-        const localPath = path.join(process.cwd(), 'public', 'data', 'portfolioData.json');
-        fs.writeFileSync(localPath, JSON.stringify(payload, null, 2), 'utf8');
-      } catch {
-        // ignore in readonly environments
-      }
-
-      const result = await updateRes.json();
       return res.status(200).json({
         success: true,
-        message: 'Portfolio data updated in Box cloud storage successfully!',
+        message: 'Portfolio data saved directly to MongoDB Atlas successfully!',
         result,
+        timestamp: new Date().toISOString(),
       });
     } catch (err) {
-      console.error('Error saving portfolio data to Box:', err);
+      console.error('Error saving portfolio data to MongoDB:', err);
       return res.status(500).json({
-        error: 'Failed to save portfolio data',
+        error: 'Failed to save portfolio data to MongoDB',
         message: err instanceof Error ? err.message : String(err),
       });
     }

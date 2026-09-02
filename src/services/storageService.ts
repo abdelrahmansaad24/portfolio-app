@@ -646,13 +646,76 @@ export class StorageService {
   }
 
   /**
-   * Fetch portfolio data from storage bucket / remote JSON endpoint
-   * Tries Box public URL, Box API directly, custom URL, remote Firebase bucket, or local JSON.
+   * Test MongoDB connection via /api/mongo-status
+   */
+  static async testMongoConnection(): Promise<{
+    success: boolean;
+    status: string;
+    message: string;
+    database?: string;
+    latencyMs?: number;
+    collections?: string[];
+  }> {
+    try {
+      const res = await fetch(`/api/mongo-status?_t=${Date.now()}`);
+      const data = await res.json();
+      return data;
+    } catch (err) {
+      return {
+        success: false,
+        status: 'error',
+        message: `Could not connect to MongoDB endpoint: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+  }
+
+  /**
+   * Save portfolio data directly to MongoDB Atlas database
+   */
+  static async savePortfolioDataToMongo(data: PortfolioData): Promise<BucketPushResult> {
+    try {
+      const res = await fetch('/api/portfolio-data', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify(data),
+      });
+
+      if (res.ok) {
+        const result = await res.json();
+        this.savePortfolioData(data);
+        return {
+          success: true,
+          status: res.status,
+          message: 'Saved directly to MongoDB Atlas!',
+          details: result,
+        };
+      }
+
+      const errData = await res.json().catch(() => ({}));
+      return {
+        success: false,
+        status: res.status,
+        message: errData.error || errData.message || `Failed to save to MongoDB (HTTP ${res.status})`,
+      };
+    } catch (err) {
+      return {
+        success: false,
+        status: 0,
+        message: `Network error saving to MongoDB: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+  }
+
+  /**
+   * Fetch portfolio data from MongoDB Atlas directly or remote endpoints
    */
   static async fetchRemotePortfolioData(customUrl?: string): Promise<PortfolioData | null> {
     const localData = this.getPortfolioData();
 
-    // 0. Priority 0: /api/portfolio-data endpoint (reads from live Box file via serverless / dev server)
+    // 0. Priority 0: /api/portfolio-data endpoint (reads live directly from MongoDB Atlas)
     try {
       const apiRes = await fetch(`/api/portfolio-data?_t=${Date.now()}`, {
         cache: 'no-store',
@@ -666,7 +729,7 @@ export class StorageService {
         }
       }
     } catch (apiErr) {
-      console.warn('Could not load from /api/portfolio-data endpoint:', apiErr);
+      console.warn('Could not load from MongoDB /api/portfolio-data endpoint:', apiErr);
     }
 
     // 1. First priority: Direct public static Box URL (Fast, CDN-cached, open access)

@@ -17,6 +17,8 @@ interface PortfolioContextType {
   updateSkillCategories: (categories: SkillCategory[]) => void;
   resetToDefaults: () => void;
   importPortfolioData: (imported: PortfolioData) => void;
+  syncWithDatabase: () => Promise<boolean>;
+  saveToMongoDB: (overrideData?: PortfolioData) => Promise<BucketPushResult>;
   syncWithStorageBucket: (customUrl?: string) => Promise<boolean>;
   pushToStorageBucket: (overrideData?: PortfolioData) => Promise<BucketPushResult>;
   pushToBoxStorage: (overrideData?: PortfolioData) => Promise<BucketPushResult>;
@@ -31,19 +33,26 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [isPushing, setIsPushing] = useState<boolean>(false);
   const [lastSyncStatus, setLastSyncStatus] = useState<string | null>(null);
   const isInitialMount = useRef(true);
+  const isInitialFetchDone = useRef(false);
 
-  // Background fetch from remote Box bucket / storage bucket on mount
+  // Background fetch from live MongoDB database on mount
   useEffect(() => {
     let isMounted = true;
     const loadRemote = async () => {
       try {
+        setIsSyncing(true);
         const remoteData = await StorageService.fetchRemotePortfolioData();
         if (remoteData && isMounted) {
           setData(remoteData);
-          setLastSyncStatus('Live data synced from Box Bucket');
+          setLastSyncStatus('Live data loaded from MongoDB Atlas');
         }
       } catch (e) {
-        console.warn('Initial remote bucket sync failed, using cached data:', e);
+        console.warn('Initial MongoDB sync failed, using cached data:', e);
+      } finally {
+        if (isMounted) {
+          setIsSyncing(false);
+          isInitialFetchDone.current = true;
+        }
       }
     };
     loadRemote();
@@ -52,42 +61,113 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     };
   }, []);
 
-  // Save to localStorage on any state change
+  // Save to localStorage immediately on any state change
   useEffect(() => {
     StorageService.savePortfolioData(data);
   }, [data]);
 
-  // Push directly to Box Storage Account
-  const pushToBoxStorage = useCallback(async (overrideData?: PortfolioData): Promise<BucketPushResult> => {
-    const dataToPush = overrideData || data;
-    setIsPushing(true);
-    try {
-      const boxToken = await StorageService.getBoxToken(undefined, dataToPush);
-      const res = await StorageService.pushPortfolioDataToBox(
-        dataToPush,
-        boxToken,
-        dataToPush.profile?.boxFolderId,
-        dataToPush.profile?.boxFileId
-      );
-      if (res.success) {
-        if (res.fileId) {
-          dataToPush.profile.boxFileId = res.fileId;
-        }
-        if (res.downloadUrl) {
-          dataToPush.profile.storageBucketDataUrl = res.downloadUrl;
-        }
-        setData({ ...dataToPush });
+  // Save directly to MongoDB Atlas
+  const saveToMongoDB = useCallback(
+    async (overrideData?: PortfolioData): Promise<BucketPushResult> => {
+      const dataToSave = overrideData || data;
+      setIsPushing(true);
+      try {
+        const res = await StorageService.savePortfolioDataToMongo(dataToSave);
+        setLastSyncStatus(res.message);
+        return res;
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : 'Error saving to MongoDB';
+        setLastSyncStatus(msg);
+        return { success: false, message: msg };
+      } finally {
+        setIsPushing(false);
       }
-      setLastSyncStatus(res.message);
-      return res;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Error pushing to Box';
-      setLastSyncStatus(msg);
-      return { success: false, message: msg };
-    } finally {
-      setIsPushing(false);
+    },
+    [data]
+  );
+
+  // Auto-Save: Whenever data is modified after initial mount/fetch, automatically persist to MongoDB Atlas
+  useEffect(() => {
+    if (isInitialMount.current) {
+      isInitialMount.current = false;
+      return;
     }
+    if (!isInitialFetchDone.current) {
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      try {
+        setIsPushing(true);
+        const res = await StorageService.savePortfolioDataToMongo(data);
+        if (res.success) {
+          setLastSyncStatus('Auto-saved to MongoDB Atlas');
+        } else {
+          setLastSyncStatus(`Auto-save: ${res.message}`);
+        }
+      } catch (err) {
+        console.warn('MongoDB auto-save error:', err);
+      } finally {
+        setIsPushing(false);
+      }
+    }, 700);
+
+    return () => clearTimeout(timer);
   }, [data]);
+
+  // Manual Sync / Pull from MongoDB Atlas
+  const syncWithDatabase = useCallback(async (): Promise<boolean> => {
+    setIsSyncing(true);
+    try {
+      const remoteData = await StorageService.fetchRemotePortfolioData();
+      if (remoteData) {
+        setData(remoteData);
+        setLastSyncStatus('Successfully refreshed from MongoDB Atlas');
+        return true;
+      }
+    } catch (err) {
+      console.error('Database sync error:', err);
+      setLastSyncStatus('Failed to sync from database');
+    } finally {
+      setIsSyncing(false);
+    }
+    return false;
+  }, []);
+
+  // Push directly to Box Storage Account
+  const pushToBoxStorage = useCallback(
+    async (overrideData?: PortfolioData): Promise<BucketPushResult> => {
+      const dataToPush = overrideData || data;
+      setIsPushing(true);
+      try {
+        const boxToken = await StorageService.getBoxToken(undefined, dataToPush);
+        const res = await StorageService.pushPortfolioDataToBox(
+          dataToPush,
+          boxToken,
+          dataToPush.profile?.boxFolderId,
+          dataToPush.profile?.boxFileId
+        );
+        if (res.success) {
+          if (res.fileId) {
+            dataToPush.profile.boxFileId = res.fileId;
+          }
+          if (res.downloadUrl) {
+            dataToPush.profile.storageBucketDataUrl = res.downloadUrl;
+          }
+          setData({ ...dataToPush });
+        }
+        setLastSyncStatus(res.message);
+        return res;
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : 'Error pushing to Box';
+        setLastSyncStatus(msg);
+        return { success: false, message: msg };
+      } finally {
+        setIsPushing(false);
+      }
+    },
+    [data]
+  );
 
   // Initialize Box Bucket with default data and default CV
   const initializeBoxBucket = useCallback(async (): Promise<BucketPushResult> => {
@@ -115,84 +195,52 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
   }, [data]);
 
-  // Push to all active storage backends (Box + Firebase / custom bucket)
-  const pushToStorageBucket = useCallback(async (overrideData?: PortfolioData): Promise<BucketPushResult> => {
-    const dataToPush = overrideData || data;
-    setIsPushing(true);
-    try {
-      // 1. Push directly to Box Storage if Box token is available
-      const boxToken = await StorageService.getBoxToken(undefined, dataToPush);
-      let boxResult: BucketPushResult | null = null;
-      if (boxToken && boxToken.trim() !== '') {
-        try {
-          boxResult = await StorageService.pushPortfolioDataToBox(
-            dataToPush,
-            boxToken,
-            dataToPush.profile?.boxFolderId,
-            dataToPush.profile?.boxFileId
-          );
-          if (boxResult.fileId) {
-            dataToPush.profile.boxFileId = boxResult.fileId;
+  // Push to all active storage backends
+  const pushToStorageBucket = useCallback(
+    async (overrideData?: PortfolioData): Promise<BucketPushResult> => {
+      const dataToPush = overrideData || data;
+      setIsPushing(true);
+      try {
+        // Persist to MongoDB
+        const mongoRes = await StorageService.savePortfolioDataToMongo(dataToPush);
+
+        // Optional push to Box if configured
+        const boxToken = await StorageService.getBoxToken(undefined, dataToPush);
+        if (boxToken && boxToken.trim() !== '') {
+          try {
+            await StorageService.pushPortfolioDataToBox(
+              dataToPush,
+              boxToken,
+              dataToPush.profile?.boxFolderId,
+              dataToPush.profile?.boxFileId
+            );
+          } catch {
+            // ignore
           }
-          if (boxResult.downloadUrl) {
-            dataToPush.profile.storageBucketDataUrl = boxResult.downloadUrl;
-          }
-        } catch {
-          // ignore
         }
+
+        const combinedMessage = mongoRes.success
+          ? 'Saved directly to MongoDB Atlas!'
+          : mongoRes.message;
+
+        setLastSyncStatus(combinedMessage);
+        return {
+          success: true,
+          message: combinedMessage,
+        };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : 'Error saving data';
+        setLastSyncStatus(msg);
+        return { success: false, message: msg };
+      } finally {
+        setIsPushing(false);
       }
+    },
+    [data]
+  );
 
-      // 2. Also push to generic/Firebase bucket
-      const result = await StorageService.pushPortfolioDataToBucket(dataToPush);
-      const combinedMessage = boxResult?.success
-        ? boxResult.message
-        : result.message;
-
-      setLastSyncStatus(combinedMessage);
-      return {
-        success: (boxResult?.success ?? false) || result.success,
-        message: combinedMessage,
-      };
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Error pushing to bucket';
-      setLastSyncStatus(msg);
-      return { success: false, message: msg };
-    } finally {
-      setIsPushing(false);
-    }
-  }, [data]);
-
-  // Handle auto-sync to bucket if enabled
-  useEffect(() => {
-    if (isInitialMount.current) {
-      isInitialMount.current = false;
-      return;
-    }
-    if (data.profile?.autoSyncToBucket) {
-      const timer = setTimeout(() => {
-        pushToStorageBucket(data);
-      }, 1000);
-      return () => clearTimeout(timer);
-    }
-  }, [data, pushToStorageBucket]);
-
-  const syncWithStorageBucket = async (customUrl?: string): Promise<boolean> => {
-    setIsSyncing(true);
-    try {
-      const remoteData = await StorageService.fetchRemotePortfolioData(customUrl);
-      if (remoteData) {
-        setData(remoteData);
-        setIsSyncing(false);
-        setLastSyncStatus('Successfully refreshed from Box / Cloud Bucket');
-        return true;
-      }
-    } catch (err) {
-      console.error('Storage bucket sync error:', err);
-      setLastSyncStatus('Failed to sync from bucket');
-    } finally {
-      setIsSyncing(false);
-    }
-    return false;
+  const syncWithStorageBucket = async (_customUrl?: string): Promise<boolean> => {
+    return await syncWithDatabase();
   };
 
   const updateProfile = (profile: ProfileInfo) => {
@@ -205,50 +253,50 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const addProject = (newProj: Omit<Project, 'id'>) => {
     const project: Project = {
       ...newProj,
-      id: `proj-${Date.now()}`
+      id: `proj-${Date.now()}`,
     };
     setData((prev) => ({
       ...prev,
-      projects: [project, ...prev.projects]
+      projects: [project, ...prev.projects],
     }));
   };
 
   const updateProject = (updated: Project) => {
     setData((prev) => ({
       ...prev,
-      projects: prev.projects.map((p) => (p.id === updated.id ? updated : p))
+      projects: prev.projects.map((p) => (p.id === updated.id ? updated : p)),
     }));
   };
 
   const deleteProject = (id: string) => {
     setData((prev) => ({
       ...prev,
-      projects: prev.projects.filter((p) => p.id !== id)
+      projects: prev.projects.filter((p) => p.id !== id),
     }));
   };
 
   const addExperience = (newExp: Omit<Experience, 'id'>) => {
     const experience: Experience = {
       ...newExp,
-      id: `exp-${Date.now()}`
+      id: `exp-${Date.now()}`,
     };
     setData((prev) => ({
       ...prev,
-      experiences: [experience, ...prev.experiences]
+      experiences: [experience, ...prev.experiences],
     }));
   };
 
   const updateExperience = (updated: Experience) => {
     setData((prev) => ({
       ...prev,
-      experiences: prev.experiences.map((e) => (e.id === updated.id ? updated : e))
+      experiences: prev.experiences.map((e) => (e.id === updated.id ? updated : e)),
     }));
   };
 
   const deleteExperience = (id: string) => {
     setData((prev) => ({
       ...prev,
-      experiences: prev.experiences.filter((e) => e.id !== id)
+      experiences: prev.experiences.filter((e) => e.id !== id),
     }));
   };
 
@@ -266,7 +314,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     if (imported && imported.profile && imported.projects) {
       setData(imported);
       StorageService.savePortfolioData(imported);
-      setLastSyncStatus('Imported snapshot loaded');
+      StorageService.savePortfolioDataToMongo(imported);
+      setLastSyncStatus('Imported snapshot loaded & saved to MongoDB Atlas');
     }
   };
 
@@ -287,6 +336,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         updateSkillCategories,
         resetToDefaults,
         importPortfolioData,
+        syncWithDatabase,
+        saveToMongoDB,
         syncWithStorageBucket,
         pushToStorageBucket,
         pushToBoxStorage,

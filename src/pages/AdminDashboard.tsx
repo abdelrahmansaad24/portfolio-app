@@ -33,7 +33,6 @@ import {
   StorageService,
   DEFAULT_STORAGE_BUCKET_URL,
   DEFAULT_STORAGE_BUCKET_UPLOAD_URL,
-  LOCAL_JSON_FALLBACK_URL,
 } from '../services/storageService';
 import { useNavigate } from 'react-router-dom';
 
@@ -45,6 +44,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
   const {
     data,
     isSyncing,
+    isPushing,
     lastSyncStatus,
     updateProfile,
     addProject,
@@ -56,8 +56,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     updateSkillCategories,
     resetToDefaults,
     importPortfolioData,
-    syncWithStorageBucket,
-    pushToStorageBucket,
+    saveToMongoDB,
+    syncWithDatabase,
     pushToBoxStorage,
     initializeBoxBucket,
   } = usePortfolio();
@@ -66,6 +66,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
   const [activeTab, setActiveTab] = useState<'projects' | 'experience' | 'skills' | 'profile' | 'backup'>('projects');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [bucketTestState, setBucketTestState] = useState<{ testing: boolean; message: string | null; isSuccess?: boolean }>({
+    testing: false,
+    message: null,
+  });
+  const [mongoTestState, setMongoTestState] = useState<{ testing: boolean; message: string | null; isSuccess?: boolean }>({
     testing: false,
     message: null,
   });
@@ -283,16 +287,32 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     }
   };
 
-  const handleSyncStorageBucket = async () => {
-    const targetUrl = profileForm.storageBucketDataUrl || DEFAULT_STORAGE_BUCKET_URL;
-    const success = await syncWithStorageBucket(targetUrl);
+  const handleSaveToMongo = async () => {
+    showToast('Saving portfolio data to MongoDB Atlas...');
+    const res = await saveToMongoDB({ ...data, profile: profileForm });
+    showToast(res.message);
+  };
+
+  const handleSyncFromMongo = async () => {
+    const success = await syncWithDatabase();
     if (success) {
       setProfileForm({ ...data.profile });
-      showToast('Synced latest data from Storage Bucket!');
+      showToast('Synced latest data from MongoDB Atlas!');
     } else {
-      showToast('Could not fetch data from storage bucket URL.');
+      showToast('Could not fetch data from MongoDB Atlas.');
     }
   };
+
+  const handleTestMongo = async () => {
+    setMongoTestState({ testing: true, message: null });
+    const res = await StorageService.testMongoConnection();
+    setMongoTestState({
+      testing: false,
+      message: res.message,
+      isSuccess: res.success,
+    });
+  };
+
 
   const handlePushToBucket = () => {
     const currentEditedData = {
@@ -367,16 +387,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     updateProfile(profileForm);
-    if (profileForm.autoSyncToBucket) {
-      showToast('Profile saved! Pushing updates to Storage Bucket...');
-      const res = await pushToStorageBucket({ ...data, profile: profileForm });
-      if (res.success) {
-        showToast('Profile saved & synced to Storage Bucket!');
-      } else {
-        showToast(`Profile saved locally: ${res.message}`);
-      }
+    showToast('Saving profile changes directly to MongoDB Atlas...');
+    const res = await saveToMongoDB({ ...data, profile: profileForm });
+    if (res.success) {
+      showToast('Profile saved directly to MongoDB Atlas!');
     } else {
-      showToast('Profile & storage configuration saved!');
+      showToast(`Saved locally: ${res.message}`);
     }
   };
 
@@ -395,7 +411,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
         const parsed = JSON.parse(event.target?.result as string);
         importPortfolioData(parsed);
         setProfileForm(parsed.profile);
-        showToast('Portfolio data restored from backup!');
+        showToast('Portfolio data restored & synced to MongoDB!');
       } catch (err) {
         console.error('Import parse error:', err);
         alert('Invalid JSON file format.');
@@ -458,65 +474,75 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
             style={{
               padding: '0.5rem',
               borderRadius: '10px',
-              background: 'linear-gradient(135deg, #06b6d4, #6366f1)',
+              background: 'linear-gradient(135deg, #10b981, #06b6d4)',
               display: 'flex',
             }}
           >
-            <Layers size={20} color="#ffffff" />
+            <Database size={20} color="#ffffff" />
           </div>
           <div>
             <h2 style={{ fontSize: '1.2rem', fontWeight: 800 }}>
               Admin <span className="gradient-text">Control Center</span>
             </h2>
             <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-              Dynamic Portfolio Management Engine
+              Powered directly by MongoDB Atlas (Auto-Save Active)
             </div>
           </div>
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-          {lastSyncStatus && (
-            <div
-              style={{
-                fontSize: '0.75rem',
-                color: 'var(--text-muted)',
-                background: 'rgba(255, 255, 255, 0.05)',
-                padding: '0.35rem 0.75rem',
-                borderRadius: '20px',
-                border: '1px solid var(--border-glass)',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.35rem',
-              }}
-            >
-              <Radio size={12} color="#10b981" />
-              <span>{lastSyncStatus}</span>
-            </div>
-          )}
+          {/* Live Sync Status */}
+          <div
+            style={{
+              fontSize: '0.75rem',
+              color: '#34d399',
+              background: 'rgba(16, 185, 129, 0.1)',
+              padding: '0.35rem 0.75rem',
+              borderRadius: '20px',
+              border: '1px solid rgba(16, 185, 129, 0.3)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.35rem',
+            }}
+          >
+            <Radio size={12} color="#10b981" />
+            <span>{isPushing ? 'Saving to MongoDB...' : (lastSyncStatus || 'MongoDB Atlas Connected')}</span>
+          </div>
 
           <button
-            onClick={handlePushToBucket}
+            onClick={handleSaveToMongo}
+            disabled={isPushing}
             className="btn btn-primary btn-sm"
             style={{
               gap: '0.4rem',
-              background: 'linear-gradient(135deg, #06b6d4, #6366f1)',
-              boxShadow: '0 4px 14px rgba(6, 182, 212, 0.3)',
+              background: 'linear-gradient(135deg, #10b981, #06b6d4)',
+              boxShadow: '0 4px 14px rgba(16, 185, 129, 0.3)',
             }}
-            title="Download current edited version as portfolioData.json"
+            title="Save changes immediately to MongoDB Atlas"
           >
-            <Download size={14} />
-            <span>Download Version</span>
+            <Save size={14} />
+            <span>{isPushing ? 'Saving...' : 'Save to MongoDB'}</span>
           </button>
 
           <button
-            onClick={() => handleSyncStorageBucket()}
+            onClick={handleSyncFromMongo}
             disabled={isSyncing}
             className="btn btn-secondary btn-sm"
             style={{ gap: '0.4rem' }}
-            title="Fetch latest data from Storage Bucket"
+            title="Fetch latest data directly from MongoDB Atlas"
           >
             <RefreshCw size={14} className={isSyncing ? 'animate-spin' : ''} />
-            <span>{isSyncing ? 'Syncing...' : 'Pull Bucket'}</span>
+            <span>{isSyncing ? 'Syncing...' : 'Pull MongoDB'}</span>
+          </button>
+
+          <button
+            onClick={handlePushToBucket}
+            className="btn btn-secondary btn-sm"
+            style={{ gap: '0.4rem' }}
+            title="Download current edited version as portfolioData.json"
+          >
+            <Download size={14} />
+            <span>Download JSON</span>
           </button>
 
           <button
@@ -585,7 +611,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
             style={{ gap: '0.5rem' }}
           >
             <UserCheck size={16} />
-            <span>Profile & Box API</span>
+            <span>Profile & CV</span>
           </button>
 
           <button
@@ -594,7 +620,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
             style={{ gap: '0.5rem' }}
           >
             <Database size={16} />
-            <span>Backup & Reset</span>
+            <span>MongoDB & Backups</span>
           </button>
         </div>
 
@@ -1213,111 +1239,111 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
           </div>
         )}
 
-        {/* TAB 5: BACKUP & RESTORE */}
+        {/* TAB 5: MONGODB & BACKUPS */}
         {activeTab === 'backup' && (
-          <div style={{ maxWidth: '750px' }}>
+          <div style={{ maxWidth: '800px' }}>
             <div style={{ marginBottom: '1.5rem' }}>
-              <h3 style={{ fontSize: '1.5rem' }}>Storage Bucket & Live Cloud Deployment</h3>
+              <h3 style={{ fontSize: '1.5rem' }}>MongoDB Atlas Direct Database</h3>
               <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-                Push and publish your portfolio data directly to the remote Storage Bucket so any visitor immediately loads your newest updates.
+                Your portfolio data reads and writes directly to MongoDB Atlas in real-time. Any changes you make are auto-saved automatically to your database.
               </p>
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-              {/* Storage Bucket Sync Card */}
+              {/* MongoDB Atlas Direct Live Card */}
               <div
                 className="glass-card"
                 style={{
                   padding: '1.75rem',
-                  border: '1px solid rgba(99, 102, 241, 0.3)',
-                  background: 'rgba(99, 102, 241, 0.05)',
+                  border: '1px solid rgba(16, 185, 129, 0.3)',
+                  background: 'rgba(16, 185, 129, 0.05)',
                 }}
               >
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem', flexWrap: 'wrap', gap: '0.5rem' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-                    <Cloud size={20} color="#818cf8" />
-                    <h4 style={{ fontSize: '1.15rem' }}>Live Storage Bucket Push & Sync</h4>
+                    <Database size={22} color="#34d399" />
+                    <div>
+                      <h4 style={{ fontSize: '1.15rem', color: '#ffffff' }}>MongoDB Atlas Cluster0 (Direct Read/Write)</h4>
+                      <div style={{ fontSize: '0.75rem', color: '#6ee7b7' }}>Database: <code>portfolio</code> • Collection: <code>portfolio_data</code></div>
+                    </div>
                   </div>
-                  {lastSyncStatus && (
-                    <span style={{ fontSize: '0.75rem', color: '#a5b4fc', background: 'rgba(99,102,241,0.15)', padding: '0.2rem 0.6rem', borderRadius: '12px' }}>
-                      {lastSyncStatus}
-                    </span>
-                  )}
+                  <span
+                    style={{
+                      fontSize: '0.75rem',
+                      color: '#34d399',
+                      background: 'rgba(16, 185, 129, 0.2)',
+                      padding: '0.3rem 0.75rem',
+                      borderRadius: '12px',
+                      border: '1px solid rgba(16, 185, 129, 0.4)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.35rem',
+                      fontWeight: 600,
+                    }}
+                  >
+                    <Radio size={10} color="#34d399" />
+                    Auto-Save Active
+                  </span>
                 </div>
+
                 <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '1.25rem' }}>
-                  When you push to the bucket, the remote <code>portfolioData.json</code> is modified. When any visitor loads your website, it reads directly from this bucket URL.
+                  Every project edit, new experience, skills update, or profile modification is instantly persisted into MongoDB Atlas with automatic debouncing. No manual bucket uploads required!
                 </p>
 
                 <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap', marginBottom: '1.25rem' }}>
                   <button
-                    onClick={handlePushToBucket}
+                    onClick={handleTestMongo}
                     className="btn btn-primary btn-sm"
+                    disabled={mongoTestState.testing}
                     style={{
-                      background: 'linear-gradient(135deg, #06b6d4, #6366f1)',
-                      boxShadow: '0 4px 15px rgba(6, 182, 212, 0.3)',
+                      background: 'linear-gradient(135deg, #10b981, #06b6d4)',
+                      boxShadow: '0 4px 15px rgba(16, 185, 129, 0.3)',
                       gap: '0.4rem',
                     }}
-                    title="Download current edited version as portfolioData.json"
                   >
-                    <Download size={15} />
-                    <span>Download Current Edited Version (portfolioData.json)</span>
+                    <Zap size={14} />
+                    <span>{mongoTestState.testing ? 'Testing...' : 'Test MongoDB Atlas Connection'}</span>
                   </button>
 
                   <button
-                    onClick={handleSyncStorageBucket}
+                    onClick={handleSaveToMongo}
                     className="btn btn-secondary btn-sm"
-                    disabled={isSyncing}
-                  >
-                    <RefreshCw size={14} className={isSyncing ? 'animate-spin' : ''} />
-                    <span>{isSyncing ? 'Pulling...' : 'Pull / Read from Bucket Now'}</span>
-                  </button>
-
-                  <button
-                    onClick={handlePushToBox}
-                    className="btn btn-secondary btn-sm"
+                    disabled={isPushing}
                     style={{ gap: '0.4rem' }}
                   >
-                    <UploadCloud size={14} />
-                    <span>Push to Box Bucket</span>
+                    <Save size={14} />
+                    <span>{isPushing ? 'Saving...' : 'Save to MongoDB Now'}</span>
                   </button>
 
                   <button
-                    onClick={handleInitializeBoxBucket}
+                    onClick={handleSyncFromMongo}
                     className="btn btn-secondary btn-sm"
-                    style={{ gap: '0.4rem', border: '1px solid var(--primary)', color: 'var(--primary)' }}
-                    title="Initialize Box Bucket with default portfolioData.json and CV.pdf"
+                    disabled={isSyncing}
+                    style={{ gap: '0.4rem' }}
                   >
-                    <Layers size={14} />
-                    <span>Create Defaults & CV on Box</span>
+                    <RefreshCw size={14} className={isSyncing ? 'animate-spin' : ''} />
+                    <span>{isSyncing ? 'Pulling...' : 'Pull / Fetch from MongoDB'}</span>
                   </button>
 
                   <button
-                    onClick={() => handleTestBucket()}
+                    onClick={handlePushToBucket}
                     className="btn btn-secondary btn-sm"
-                    disabled={bucketTestState.testing}
+                    style={{ gap: '0.4rem' }}
+                    title="Download current edited version as portfolioData.json"
                   >
-                    <Zap size={14} />
-                    <span>{bucketTestState.testing ? 'Testing...' : 'Test Connection'}</span>
-                  </button>
-
-                  <button
-                    onClick={handleTestBox}
-                    className="btn btn-secondary btn-sm"
-                    disabled={bucketTestState.testing}
-                  >
-                    <Zap size={14} />
-                    <span>Test Box Token</span>
+                    <Download size={14} />
+                    <span>Download JSON Backup</span>
                   </button>
                 </div>
 
-                {bucketTestState.message && (
+                {mongoTestState.message && (
                   <div
                     style={{
-                      padding: '0.7rem 1rem',
+                      padding: '0.75rem 1rem',
                       borderRadius: 'var(--radius-sm)',
-                      background: bucketTestState.isSuccess ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
-                      border: `1px solid ${bucketTestState.isSuccess ? 'rgba(16, 185, 129, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`,
-                      color: bucketTestState.isSuccess ? '#34d399' : '#f87171',
+                      background: mongoTestState.isSuccess ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+                      border: `1px solid ${mongoTestState.isSuccess ? 'rgba(16, 185, 129, 0.4)' : 'rgba(239, 68, 68, 0.4)'}`,
+                      color: mongoTestState.isSuccess ? '#34d399' : '#f87171',
                       fontSize: '0.85rem',
                       display: 'flex',
                       alignItems: 'center',
@@ -1325,48 +1351,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                       marginBottom: '1rem',
                     }}
                   >
-                    {bucketTestState.isSuccess ? <Check size={16} /> : <AlertCircle size={16} />}
-                    <span>{bucketTestState.message}</span>
+                    {mongoTestState.isSuccess ? <Check size={16} /> : <AlertCircle size={16} />}
+                    <span>{mongoTestState.message}</span>
                   </div>
                 )}
 
-                {/* Bucket Presets */}
-                <div style={{ marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: '1px solid rgba(255, 255, 255, 0.08)' }}>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>
-                    Quick Preset Endpoints:
-                  </div>
-                  <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setProfileForm((prev) => ({
-                          ...prev,
-                          storageBucketDataUrl: DEFAULT_STORAGE_BUCKET_URL,
-                          storageBucketUploadUrl: DEFAULT_STORAGE_BUCKET_UPLOAD_URL,
-                        }));
-                        showToast('Set to Firebase Storage preset!');
-                      }}
-                      className="btn btn-secondary btn-sm"
-                      style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
-                    >
-                      Firebase Storage (Default)
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setProfileForm((prev) => ({
-                          ...prev,
-                          storageBucketDataUrl: LOCAL_JSON_FALLBACK_URL,
-                          storageBucketUploadUrl: LOCAL_JSON_FALLBACK_URL,
-                        }));
-                        showToast('Set to Local Fallback JSON preset!');
-                      }}
-                      className="btn btn-secondary btn-sm"
-                      style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
-                    >
-                      Local Static Fallback
-                    </button>
-                  </div>
+                <div style={{ marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: '1px solid rgba(255, 255, 255, 0.08)', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                  Cluster: <code>cluster0.gemj4ss.mongodb.net</code> • Auth: <code>Abdelrahman</code> • Protocol: <code>mongodb+srv</code>
                 </div>
               </div>
 

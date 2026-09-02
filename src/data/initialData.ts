@@ -59,7 +59,7 @@ export const initialPortfolioData: PortfolioData = {
       "company": "Diagnosit",
       "role": "Backend Software Engineer",
       "type": "Part-time (1 Year)",
-      "period": "2024 – 2025",
+      "period": "June 2025 – June 2026",
       "location": "Remote / Hybrid",
       "description": [
         "Architected and implemented robust RESTful backend APIs using Laravel (PHP) and MySQL.",

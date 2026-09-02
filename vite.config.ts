@@ -3,12 +3,35 @@ import { defineConfig, type Plugin } from 'vite';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
+import { MongoClient, type Db } from 'mongodb';
+
+const MONGODB_URI =
+  process.env.MONGODB_URI ||
+  'mongodb+srv://Abdelrahman:24102000@cluster0.gemj4ss.mongodb.net/?appName=Cluster0';
+const MONGODB_DB = process.env.MONGODB_DB || 'portfolio';
+const COLLECTION_NAME = 'portfolio_data';
+const DOC_ID = 'portfolio_data';
+
+let mongoClient: MongoClient | null = null;
+let mongoDb: Db | null = null;
+
+async function getMongoDb(): Promise<Db> {
+  if (mongoClient && mongoDb) {
+    return mongoDb;
+  }
+  mongoClient = new MongoClient(MONGODB_URI, {
+    maxPoolSize: 10,
+    serverSelectionTimeoutMS: 5000,
+  });
+  await mongoClient.connect();
+  mongoDb = mongoClient.db(MONGODB_DB);
+  return mongoDb;
+}
 
 let cachedToken: string | null = null;
 let tokenExpiresAt = 0;
 
 const BOX_USER_ID = '52559371009';
-const BOX_FILE_ID = '2440626249336';
 const BOX_CV_FILE_ID = '2440627671737';
 
 function getBoxConfig() {
@@ -102,12 +125,45 @@ async function generateBoxToken() {
   return data;
 }
 
-function boxApiPlugin(): Plugin {
+function backendApiPlugin(): Plugin {
   return {
-    name: 'vite-plugin-box-api',
+    name: 'vite-plugin-backend-api',
     configureServer(server) {
       server.middlewares.use(async (req, res, next) => {
-        // 1. Box Token Endpoint
+        // 1. MongoDB Status Health Check Endpoint
+        if (req.url === '/api/mongo-status') {
+          const start = Date.now();
+          try {
+            const db = await getMongoDb();
+            await db.command({ ping: 1 });
+            const latency = Date.now() - start;
+            const collections = await db.listCollections().toArray();
+            res.setHeader('Content-Type', 'application/json');
+            res.end(
+              JSON.stringify({
+                success: true,
+                status: 'connected',
+                database: db.databaseName,
+                latencyMs: latency,
+                collections: collections.map((c) => c.name),
+                message: `Successfully connected to MongoDB Atlas database "${db.databaseName}" (${latency}ms)!`,
+              })
+            );
+          } catch (error) {
+            res.statusCode = 500;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(
+              JSON.stringify({
+                success: false,
+                status: 'error',
+                message: error instanceof Error ? error.message : String(error),
+              })
+            );
+          }
+          return;
+        }
+
+        // 2. Box Token Endpoint
         if (req.url === '/api/box-token' || req.url === '/box-token') {
           try {
             const tokenData = await generateBoxToken();
@@ -121,28 +177,25 @@ function boxApiPlugin(): Plugin {
           return;
         }
 
-        // 2. Portfolio Data Endpoint (GET / POST)
-        if (req.url === '/api/portfolio-data') {
+        // 3. Portfolio Data Endpoint (GET / POST / PUT) - Direct MongoDB Atlas
+        const urlWithoutQuery = req.url ? req.url.split('?')[0] : '';
+        if (urlWithoutQuery === '/api/portfolio-data') {
           if (req.method === 'GET') {
             try {
-              const tokenData = await generateBoxToken();
-              const boxRes = await fetch(`https://api.box.com/2.0/files/${BOX_FILE_ID}/content`, {
-                headers: {
-                  Authorization: `Bearer ${tokenData.access_token}`,
-                  'As-User': BOX_USER_ID,
-                },
-              });
-              if (boxRes.ok) {
-                const data = await boxRes.json();
+              const db = await getMongoDb();
+              const collection = db.collection(COLLECTION_NAME);
+              const doc = await collection.findOne({ _id: DOC_ID } as any);
+              if (doc && (doc as any).profile) {
+                const { _id, ...cleanData } = doc as any;
                 res.setHeader('Content-Type', 'application/json');
-                res.end(JSON.stringify(data));
+                res.end(JSON.stringify(cleanData));
                 return;
               }
-            } catch (err) {
-              console.warn('Vite dev Box fetch warning:', err);
+            } catch (mongoErr) {
+              console.warn('Vite dev MongoDB fetch warning:', mongoErr);
             }
 
-            // Fallback to local file
+            // Fallback to local file if MongoDB document is not yet found or offline
             const localFile = path.join(process.cwd(), 'public', 'data', 'portfolioData.json');
             if (fs.existsSync(localFile)) {
               res.setHeader('Content-Type', 'application/json');
@@ -154,7 +207,7 @@ function boxApiPlugin(): Plugin {
             return;
           }
 
-          if (req.method === 'POST') {
+          if (req.method === 'POST' || req.method === 'PUT') {
             let body = '';
             req.on('data', (chunk) => {
               body += chunk;
@@ -162,39 +215,48 @@ function boxApiPlugin(): Plugin {
             req.on('end', async () => {
               try {
                 const parsed = JSON.parse(body);
-                const tokenData = await generateBoxToken();
-                const jsonBlob = new Blob([JSON.stringify(parsed, null, 2)], { type: 'application/json' });
-                const formData = new FormData();
-                formData.append('file', jsonBlob, 'portfolioData.json');
+                if (!parsed || !parsed.profile) {
+                  res.statusCode = 400;
+                  res.end(JSON.stringify({ error: 'Invalid payload: missing profile' }));
+                  return;
+                }
 
-                const updateRes = await fetch(`https://upload.box.com/api/2.0/files/${BOX_FILE_ID}/content`, {
-                  method: 'POST',
-                  headers: {
-                    Authorization: `Bearer ${tokenData.access_token}`,
-                    'As-User': BOX_USER_ID,
+                const clean = { ...parsed };
+                delete clean._id;
+
+                // 1. Direct MongoDB update
+                const db = await getMongoDb();
+                const collection = db.collection(COLLECTION_NAME);
+                const result = await collection.updateOne(
+                  { _id: DOC_ID } as any,
+                  {
+                    $set: {
+                      ...clean,
+                      updatedAt: new Date().toISOString(),
+                    },
                   },
-                  body: formData,
-                });
+                  { upsert: true }
+                );
 
-                // Also update local file
+                // 2. Also save to local file
                 try {
                   const localFile = path.join(process.cwd(), 'public', 'data', 'portfolioData.json');
-                  fs.writeFileSync(localFile, JSON.stringify(parsed, null, 2), 'utf8');
+                  fs.writeFileSync(localFile, JSON.stringify(clean, null, 2), 'utf8');
                 } catch {
                   // ignore
                 }
 
-                if (updateRes.ok) {
-                  const result = await updateRes.json();
-                  res.setHeader('Content-Type', 'application/json');
-                  res.end(JSON.stringify({ success: true, message: 'Updated on Box Storage!', result }));
-                } else {
-                  const errTxt = await updateRes.text();
-                  res.statusCode = updateRes.status;
-                  res.setHeader('Content-Type', 'application/json');
-                  res.end(JSON.stringify({ error: 'Box update failed', details: errTxt }));
-                }
+                res.setHeader('Content-Type', 'application/json');
+                res.end(
+                  JSON.stringify({
+                    success: true,
+                    message: 'Portfolio data saved directly to MongoDB Atlas!',
+                    result,
+                    timestamp: new Date().toISOString(),
+                  })
+                );
               } catch (e) {
+                console.error('Vite dev MongoDB save error:', e);
                 res.statusCode = 500;
                 res.end(JSON.stringify({ error: e instanceof Error ? e.message : String(e) }));
               }
@@ -203,7 +265,7 @@ function boxApiPlugin(): Plugin {
           }
         }
 
-        // 3. CV / Resume Endpoint
+        // 4. CV / Resume Endpoint
         if (req.url === '/api/cv' || req.url === '/api/resume') {
           try {
             const tokenData = await generateBoxToken();
@@ -249,7 +311,7 @@ function boxApiPlugin(): Plugin {
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react(), boxApiPlugin()],
+  plugins: [react(), backendApiPlugin()],
   css: {
     postcss: {},
   },
